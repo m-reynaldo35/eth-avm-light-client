@@ -1,0 +1,99 @@
+{
+  "baseline_consumed": 2,
+  "budget_added": 320700,
+  "keccak": {
+    "32": {
+      "push": 5,
+      "keccak": 135,
+      "cost": 130
+    },
+    "128": {
+      "push": 5,
+      "keccak": 135,
+      "cost": 130
+    },
+    "532": {
+      "push": 5,
+      "keccak": 135,
+      "cost": 130
+    },
+    "1024": {
+      "push": 5,
+      "keccak": 135,
+      "cost": 130
+    }
+  },
+  "rlp_branch": {
+    "0": 62,
+    "8": 318,
+    "15": 542
+  },
+  "account_proof": {
+    "nodes": 8,
+    "consumed": 3276,
+    "per_node": 409.5,
+    "prog_bytes": 4144,
+    "ok": true,
+    "kinds": [
+      "branch",
+      "branch",
+      "branch",
+      "branch",
+      "branch",
+      "branch",
+      "branch",
+      "leaf"
+    ],
+    "sizes": [
+      532,
+      532,
+      532,
+      532,
+      532,
+      532,
+      436,
+      104
+    ]
+  },
+  "account_split": {
+    "keccak_only": 1075,
+    "rlp_only": 2202,
+    "keccak_ok": true,
+    "rlp_ok": true
+  },
+  "storage_proof": {
+    "acc_nodes": 8,
+    "sto_nodes": 9,
+    "total_nodes": 17,
+    "consumed": 6827,
+    "per_node": 401.5882352941176,
+    "prog_bytes": 7649,
+    "ok": true,
+    "failure": "",
+    "sto_sizes": [
+      532,
+      532,
+      532,
+      532,
+      532,
+      468,
+      83,
+      83,
+      40
+    ]
+  },
+  "receipt_proof": {
+    "nodes": 3,
+    "consumed": 1121,
+    "per_node": 373.6666666666667,
+    "prog_bytes": 1854,
+    "ok": true,
+    "failure": "",
+    "value_len": 683,
+    "sizes": [
+      308,
+      532,
+      690
+    ]
+  }
+}

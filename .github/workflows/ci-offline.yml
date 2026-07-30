@@ -1,0 +1,20 @@
+name: CI (offline, pinned fixtures)
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      # NOTE: placeholder until M11 (test harness) design lands and defines
+      # the real dependency/test-runner setup. This workflow intentionally
+      # has no docker/live-RPC dependency -- see ARCHITECTURE.md.
+      - name: Placeholder (no modules implemented yet)
+        run: echo "ci-offline skeleton -- populate once M1+ lands"

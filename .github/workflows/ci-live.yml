@@ -1,0 +1,22 @@
+name: CI (live, dev-mode algod + public RPC)
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 6 * * *"
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      # NOTE: placeholder. Real job brings up a dev-mode algod container
+      # (see tests/fixtures/spike-reference/README.md for the exact recipe)
+      # and validates against public Ethereum RPC, mirroring the spike's
+      # real-data validation style. Must pass manually before any module is
+      # marked "Released" in ROADMAP.md.
+      - name: Placeholder (no modules implemented yet)
+        run: echo "ci-live skeleton -- populate once M11 design lands"
