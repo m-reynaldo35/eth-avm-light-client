@@ -1,0 +1,3 @@
+release: v1.6.0-beta.0
+source: https://github.com/ethereum/consensus-spec-tests/releases/download/v1.6.0-beta.0/minimal.tar.gz
+extracted: single_merkle_proof subset only (38 cases, altair..eip7805; gloas has no single_merkle_proof cases in this release)
