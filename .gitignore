@@ -5,4 +5,5 @@ __pycache__/
 
 # Puya compiled output (recompiled by tests/bench harnesses on demand)
 _build/
+_build_mpt/
 *.puya.map

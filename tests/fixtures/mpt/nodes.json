@@ -1,0 +1,110 @@
+{
+  "note": "derived-real: real keccak256 hash-chaining throughout, produced by the `trie` PyPI package's HexaryTrie (a real, general-purpose Ethereum-compatible MPT implementation) and cross-checked byte-for-byte against contracts/mpt/ via algopy_testing before being written here (see verify_with_puya() in this script). Keys are synthetic (chosen to force the extension/embedded-child/branch-terminal/divergence structural cases eth_data.json's real but shallow proofs do not contain) -- never 'mainnet-observed'.",
+  "nodes": [
+    {
+      "label": "derived.f1_extension.nodes[0]",
+      "source": "derived-real",
+      "hex": "dd831abc12d8c42082aabb80808080c32081cc8080808080808080808080",
+      "keccak256": "63584761142a3b06148a06054fd779671356883b8c5668a9bbfc7a0edd2497ad",
+      "len": 30
+    },
+    {
+      "label": "derived.f2_f4_prefix_pair.nodes[0]",
+      "source": "derived-real",
+      "hex": "dc8300abcdd78080808080808080808080808080c43f82030480820102",
+      "keccak256": "d31fb7d58de549fc5a2830e6f8853874b0d77251786539615c571384953e1931",
+      "len": 29
+    },
+    {
+      "label": "derived.s6_branch_divergence.nodes[0]",
+      "source": "derived-real",
+      "hex": "d9821abcd5c220118080808080808080c2202280808080808080",
+      "keccak256": "447585780c0e80ade06c471c96764a64355d0746b9564d530ebc56691a19f012",
+      "len": 26
+    }
+  ],
+  "scenarios": [
+    {
+      "name": "F1_extension_parity_mismatch",
+      "root": "63584761142a3b06148a06054fd779671356883b8c5668a9bbfc7a0edd2497ad",
+      "nodes": [
+        "derived.f1_extension.nodes[0]"
+      ],
+      "honest_key": "abc120",
+      "honest_key_nibs": 6,
+      "expected_status": 1,
+      "expected_value": "aabb",
+      "note": "root is an extension, path length 5 (odd) -> nib_index odd, depth-on-arrival 0 (even): parity mismatch, exercises the misaligned nibbles_equal fallback loop (not the aligned fast path). Also used as X3 with a wholly-different wrong key (extension divergence).",
+      "wrong_keys": [
+        {
+          "key": "111111",
+          "key_nibs": 6,
+          "expected_status": 3,
+          "test": "X3"
+        }
+      ]
+    },
+    {
+      "name": "F2_F4_prefix_sharing_pair",
+      "root": "d31fb7d58de549fc5a2830e6f8853874b0d77251786539615c571384953e1931",
+      "nodes": [
+        "derived.f2_f4_prefix_pair.nodes[0]"
+      ],
+      "note": "single root node (an extension whose child branch AND that branch's item-14 leaf are both embedded, <32B) supplies BOTH proofs below -- E4 (chain of 2 inline steps).",
+      "short_key": {
+        "key": "abcd",
+        "key_nibs": 4,
+        "expected_status": 1,
+        "expected_value": "0102",
+        "test": "F4/E2 (branch-terminal, item16 non-empty)"
+      },
+      "long_key": {
+        "key": "abcdef",
+        "key_nibs": 6,
+        "expected_status": 1,
+        "expected_value": "0304",
+        "test": "F2/E4 (embedded child chain)"
+      },
+      "wrong_keys": [
+        {
+          "key": "abcdef00",
+          "key_nibs": 7,
+          "expected_status": 4,
+          "test": "S4 (leaf path strict prefix of presented key -- length check fires)"
+        },
+        {
+          "key": "abcde0",
+          "key_nibs": 6,
+          "expected_status": 4,
+          "test": "X4 (same length, content diverges)"
+        }
+      ]
+    },
+    {
+      "name": "S6_branch_divergence_shared_prefix",
+      "root": "447585780c0e80ade06c471c96764a64355d0746b9564d530ebc56691a19f012",
+      "nodes": [
+        "derived.s6_branch_divergence.nodes[0]"
+      ],
+      "honest_key": "abc0",
+      "honest_key_nibs": 4,
+      "expected_status": 1,
+      "expected_value": "11",
+      "note": "extension covers nibbles a,b,c (3); branch at depth 3 has slot 0 -> key abc0's leaf, slot 9 -> key abc9's leaf, every other slot empty.",
+      "wrong_keys": [
+        {
+          "key": "abc5",
+          "key_nibs": 4,
+          "expected_status": 2,
+          "test": "S6/X1 (genuine honest proof for key A, presented for key B sharing exactly 3 nibbles -- rejected at the branch where they diverge, not earlier [extension matches] and not at a leaf [never reached])"
+        },
+        {
+          "key": "abc0",
+          "key_nibs": 3,
+          "expected_status": 5,
+          "test": "X2 (key ends exactly at the branch, item 16 empty)"
+        }
+      ]
+    }
+  ]
+}

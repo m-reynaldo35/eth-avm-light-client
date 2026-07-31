@@ -1088,3 +1088,212 @@ nodes) using **12 of 16 transactions** and 38 % of one group's argument space.
 - **O-M5-3 — wider keys in `W`.** `W`'s 32-byte key field is sized for the tries M5's
   consumers walk. A trie with longer keys widens `W` and re-measures §7.3's per-segment
   node capacity. Recorded so it is a known consequence rather than a surprise.
+
+---
+
+## 16. Post-approval fix: the double-decode/W-copy cost gap, and wiring up inner-transaction budget donors
+
+Filed the same way M2 filed its own post-approval optimization (§16 of
+`002-rlp-decoder.md`) and M4 filed its box-reference fix (§16 of
+`004-sync-committee.md`): what was found, what was measured against a real
+dev-mode algod (never assumed — `ARCHITECTURE.md`'s own rule), what was
+changed, and an honest account of what is still open. Triggered by two
+confirmed, real problems in the implementation pass that first shipped this
+module: real measured cost ran ~2x the §8 target, and a real (non-simulated)
+submission of even one segment failed outright on opcode budget.
+
+### 16.1 What was found
+
+Reading `contracts/mpt/descend.py` and `contracts/mpt/walk.py` line-by-line
+against §5.1's own pseudocode and §2's call-site table confirmed the two
+suspects the implementer's own report flagged, and both turned out to be
+**real, implementation-level waste — not a gap in the design doc's own
+algorithm**:
+
+1. **`mpt_descend` was called twice per branch hop, fully redecoding the
+   node both times.** `mpt_walk_node`'s loop called `mpt_descend(node, start,
+   0)` once per hop purely to learn `arity` (discarding the item-0/item-1
+   data it also returned, for the `arity == 17` case), then — whenever that
+   arity was 17 — `mpt_branch_hop` called `mpt_descend(node, start, ...)` a
+   **second** time with the real `want` (16 or the derived nibble), which
+   silently reran the identical `rlp_list_header` + `rlp_item_header` ×2
+   prefix decode before continuing the skip loop from item 2. §2's own table
+   says the fused branch loop should **reuse** the discriminator's work
+   ("`rlp_scan_upto` would re-walk items 0–1 the discriminator already
+   walked... the fused loop reuses that work") — the shipped code did not do
+   that; it decoded the same prefix twice, every branch hop, with the second
+   decode's only new information being items 2 and onward. This is squarely
+   an implementation bug against the design's own stated intent, not a case
+   the design doc under-specified.
+2. **`W`'s 101-byte buffer was fully reconstructed by concatenation on every
+   hop, including the ~66 bytes (`root`, `key_nibs`, `key`) that never
+   change across a walk.** `w_with_continue`/`w_with_continue_depth_only`
+   built the new `W` as `status(1) + w_root(w)[a subroutine call and a
+   32-byte extract of a field that is immutable for the whole walk, §3.2] +
+   expected(32) + depth(2) + a 34-byte extract of key_nibs||key[also
+   immutable]`. The design doc states `root`/`key_nibs`/`key` are
+   **immutable** (§3.2) but is silent on the update *mechanism* — the
+   implementer chose full-buffer reconstruction where an in-place splice of
+   only the ≤35 bytes that actually change was available and was not tried.
+   This is also implementation waste, not a design gap.
+
+Both are exactly the kind of thing ARCHITECTURE.md's "no cost claim without a
+real simulate response" rule exists to catch — the design doc's §8.2 table
+never budgeted "redecode the same node twice" or "copy 66 unchanged bytes
+every hop" as line items, because the design's own pseudocode didn't call for
+either.
+
+### 16.2 The fix, and what it measured
+
+**`mpt_descend`'s double-decode** was split into two primitives in
+`contracts/mpt/descend.py`:
+
+- `mpt_arity_discriminate(node, start)` — runs the list-header + item-0 +
+  item-1 decode **exactly once**, returning `(arity, payload_end, o0, l0,
+  k0, o1, l1, k1)`.
+- `mpt_branch_item_at(node, o0, l0, k0, o1, l1, k1, payload_end, want)` —
+  given those already-decoded spans, returns item `want`'s span, doing
+  **new** work only (the item-2-onward skip loop) when `want >= 2`.
+
+`mpt_walk_node` now calls `mpt_arity_discriminate` once per hop and threads
+its result into whichever handler is dispatched; `mpt_branch_hop`'s
+signature changed from `(node, start, w)` to `(node, o0, l0, k0, o1, l1, k1,
+payload_end, w)` — it no longer independently re-derives arity (the old
+internal `assert arity == 17, "W5"` is gone; see the retirement note below).
+`mpt_descend(node, start, want)` itself is kept, unchanged in signature and
+behaviour, as a thin composition of the two primitives — every existing
+caller/test that calls it directly still gets byte-for-byte the same result;
+only the hot path (`mpt_walk_node` → `mpt_branch_hop`) was rewired to avoid
+the second full decode.
+
+**`W`'s copy cost** was fixed in `contracts/mpt/state.py` by replacing the
+5-piece concatenation in `w_with_continue`/`w_with_continue_depth_only`/
+`w_with_terminal` with `op.replace` splices that touch only the bytes that
+actually change (1–35 of 101), and by marking the tiny field accessors
+(`w_status`/`w_root`/`w_expected`/`w_depth`/`w_key_nibs`/`w_key`) `inline=True`
+— the same treatment M2 gives `nibble_at`, its own 3-opcode accessor.
+
+**Measured, real, live** (`bench/mpt_bench.py` against dev-mode algod, same
+recipe as every other module's bench):
+
+| gate | before this pass | after this pass | target |
+|---|---:|---:|---:|
+| G6-M5 (8-node account inclusion, headline) | 6,419 | **5,116** | < 3,276 (spike) / ≈3,230 (design) |
+| G1-M5 (3-node receipt inclusion) | 2,196 | **1,813** | < 1,121 |
+| G5-M5 (compiled size, M5's own bytes) | 2,099 B | **1,969 B** | ≤ 1,400 B |
+| 2-segment receipt group, simulate, per-txn | [712, 1671] | **[544, 1480]** | — |
+
+Removing the confirmed double-decode and W-copy waste recovered **1,303
+budget** (20.3%) on the headline 8-node account walk and **383 budget**
+(17.4%) on the 3-node receipt walk, with zero change to §5's key-derivation,
+nibble-comparison, or hash-chain logic — every S/E/X/R/D test in §9 (72 mpt
+unit tests, plus the full 350-test project suite) passes unchanged before and
+after, confirming the fix is a pure performance change.
+
+**W5 retired.** The old internal `assert arity == 17, "W5"` inside
+`mpt_branch_hop` re-derived a value (`arity`) that is a pure function of
+`node`/`start` and therefore always agreed with whatever the caller's own
+discrimination already found — this test file's own pre-existing comment
+already documented that this check was unreachable through `mpt_walk_node`'s
+normal routing before this pass, and was only exercisable by calling
+`mpt_branch_hop` directly, bypassing its calling convention. Removing it
+recovers the second decode's cost with no loss of a check that was actually
+reachable in production. `mpt_branch_hop` now documents, as a precondition,
+that a caller who invokes it directly (not through `mpt_walk_node`) is
+responsible for supplying spans that really came from
+`mpt_arity_discriminate(node, start)` on the same `node`/`start` — this is a
+standard internal-API trust boundary, not a change to any check a relayer's
+untrusted input passes through. `contracts/mpt/__init__.py`'s error-code
+table documents W5's retirement in place, rather than silently dropping it.
+
+### 16.3 Inner-transaction budget donors — wired up, and a real submission now succeeds
+
+§7.6 already named the fix in principle ("with donors issued as inner
+transactions, budget stops binding entirely") but it was not wired into
+`contracts/mpt/bench_app.py`'s segment driver by the implementation pass that
+shipped first. This pass follows M1 §9.1's pattern exactly ("the heavy call
+issues N cheap no-op inner app calls purely to raise the pool, then runs
+[the real work] in a single program"), the same pattern M4 §16 exposed as
+`donor()`/`noop_budget()`:
+
+- `MptSegmentApp`'s raw-arg layout gained two fields: `donor_count` (u64) and
+  `donor_app_id` (u64), placed right after `mode`. Each segment call issues
+  `donor_count` no-op inner `ApplicationCall`s to `donor_app_id` **before**
+  doing any real walk work (M1 §9.1's required ordering — the pool must
+  already be raised by the time the heavy work starts consuming it).
+- **The donor callee must be a separate, already-deployed app — an app
+  cannot issue an inner call to itself.** This was found empirically in this
+  pass (not anticipated by any prior design doc): a self-targeted
+  `itxn.ApplicationCall` fails with the literal protocol error `logic eval
+  error: attempt to self-call`. `MptBenchBaselineBare` (already a bare
+  `return True` program, already deployed for the G5-M5 size probe) is
+  reused as the callee — exactly the spike's own `probe_inner.py` pattern
+  ("Deploy a trivial callee app. Then ... issues N inner app-calls to the
+  callee").
+- Donor counts are sized from a prior `simulate` reading of the same group
+  with zero donors (`consumed`, per top-level transaction), the same way a
+  real relayer would size them, then verified by an **actual**
+  `send_transactions` call — not `simulate`.
+
+**Measured, real, live, non-simulated submissions** (`bench/mpt_bench.py`
+`G7_M5_real_submission`, against dev-mode algod):
+
+| workload | before this pass | after this pass |
+|---|---|---|
+| single segment alone (key derivation + 1 node hop, no group) | **FAILED**: `logic eval error: pc=1316 dynamic cost budget exceeded ... local program cost was 700` | **SUCCEEDS**, no donors needed (527 budget, under 700 on its own — the §16.2 fix alone was enough for this one segment) |
+| 2-segment group, full 3-node receipt inclusion proof | not attempted (blocked on the line above) | **SUCCEEDS**, with 2 donor calls issued in segment 0 |
+| 3-segment group, full **8-node account inclusion proof** (the exact workload G6-M5 measures under `simulate`) | not attempted | **SUCCEEDS**, with 6 donor calls issued in segment 0 |
+
+**This is the headline result of this pass**: a real, non-simulated,
+end-to-end submission of the full segmented 8-node account-proof walk — key
+derived on-chain, every branch index derived from the key on-chain, hash
+chain verified at every hop, segment hand-off cryptographically bound via
+§7.4's log-recovery mechanism, and the group's own pooled opcode budget (not
+`simulate`'s `extra_opcode_budget` knob) covering the real cost — now
+succeeds. §5's security checks (branch/extension/leaf descent, exact-length
+leaf matching, hash-chain verification, forged-handoff rejection) were not
+touched to achieve this; S7/S8's live honest-pass/forged-reject
+demonstration still passes unchanged.
+
+### 16.4 Honest remaining gap
+
+**G6-M5 does not pass.** 5,116 is still 56% above the 3,276 spike-insecure
+baseline and 58% above the design doc's own ≈3,230 target; G1-M5 (1,813 vs
+1,121) and G5-M5 (1,969 B vs 1,400 B) also still miss their targets. This is
+reported plainly, not rounded away.
+
+Of the original 3,853-budget gap between M2's 2,566 hash-chain-only baseline
+and M5's pre-fix 6,419, this pass recovered 1,303 (the confirmed
+implementation waste in §16.1/16.2). The remaining ≈2,550-budget gap above
+the design's own target is **not** attributable to any further double-work
+found by this pass — `mpt_arity_discriminate` now runs exactly once per hop,
+and `W` is now spliced rather than rebuilt. It reflects the cumulative real
+Puya-compiled cost of §5's genuinely larger surface versus M2's G6 baseline:
+on-chain key derivation (measured flat 130/hash), the unconditional
+arity-discriminating decode §5.1 deliberately chose over the cheaper
+shape-based alternative (for the "one code path, no ambiguous row" reason
+§5.1 itself gives, not something this pass should relitigate), and — most
+likely, per M3's own precedent that "real Puya-compiled cost is ~40% higher
+than the design doc's hand-TEAL numbers" — the design's §8.2 table's
+per-line target estimates (each individually "~10", "~15", "~80") were
+collectively optimistic about real Puya control-flow/subroutine-call
+overhead across the many small operations `nibble_at`/`hp_decode`/
+`nibbles_equal`/child classification actually compile to. The design doc's
+own named lever, **O-M5-1** (the shape-based arity discriminator, §11.3),
+would save only ≈105 of the remaining ≈2,550 (≈4%) — nowhere near enough to
+close this gap on its own. Closing the rest would require either revisiting
+§5.1's unconditional-discriminate architecture itself (a real design
+trade-off, not an implementation bug, and explicitly out of scope for this
+pass: "do not touch the key-derivation/nibble-comparison logic") or accepting
+that a genuinely key-bound, security-fixed walker costs meaningfully more per
+hop than the spike's hash-chain-only one, and that §8.2's ≈26%-overhead
+target — which the design doc itself called "thin" — was too optimistic.
+This is left as an honest open gap for a future pass, not papered over by
+loosening any check in §5.
+
+**What is now solid**: all 72 `tests/unit/test_mpt_*.py` tests and the full
+350-test project suite pass, unchanged, before and after this pass. The
+security-critical tests (S1–S8, the adversarial-key-rejection tests; the
+leaf-exact-length test S4; the live hand-off tests S7/S8) all still pass. A
+real, non-simulated submission of the full 8-node account-proof segmented
+walk now succeeds end-to-end, which it could not do at all before this pass.

@@ -1,0 +1,77 @@
+{
+  "gates": {
+    "G5_M5_compiled_size": {
+      "combined_probe_bytes": 2812,
+      "m2_only_probe_bytes": 843,
+      "mpt_baseline_bytes": 4,
+      "m5_own_contribution_bytes": 1969,
+      "target": "<= 1400 bytes",
+      "pass": false,
+      "note": "Measured as size(MptSizeProbeCombinedBare) - size(M2-only RlpSizeProbeBare), i.e. M5's OWN incremental bytes on top of M2's already-measured 839 B contribution -- matching the design doc's own framing (\u00a72, \u00a78.1). MptSizeProbeCombinedBare calls the SAME M2 subroutines RlpSizeProbeBare calls (so that part of the diff is ~zero) plus EVERY public contracts/mpt subroutine, mirroring M2's own gate-G5 probe convention. If bench/_build/RlpSizeProbeBare.approval.bin is missing (M2's own bench not run in this environment), m2_only_probe_bytes is null and no pass/fail is computed."
+    },
+    "G1_M5_receipt_inclusion": {
+      "consumed": 1813,
+      "ok": true,
+      "failure": "",
+      "spike_baseline": 1121,
+      "target": "< 1121",
+      "pass": false
+    },
+    "G6_M5_account_inclusion": {
+      "consumed": 5116,
+      "ok": true,
+      "failure": "",
+      "spike_insecure_baseline": 3276,
+      "m2_g6_baseline": 2566,
+      "target": "< 3276 (the spike's insecure number)",
+      "design_doc_target_estimate": 3230,
+      "pass": false,
+      "note": "This is a COMPLETE, key-bound proof: mpt_key_from_address runs on-chain (keccak256(address)), and every branch descent index is derived on-chain from that key -- unlike the spike's 3,276, which trusted a caller-supplied step list. Compare against M2's own G6 baseline (2,566, hash-chain-only walk with NO key binding) to see M5's own added cost in isolation."
+    },
+    "G4_M5_handoff_and_G7_M5_group": {
+      "ok": true,
+      "total_consumed": 2024,
+      "per_txn_consumed": [
+        544,
+        1480
+      ],
+      "failure": "",
+      "note": "2-segment live group over the real 3-node receipt proof: segment 0 builds W on-chain from (root, tx index 31) and walks node 0; segment 1 recovers W via mpt_state_from_prev (reading segment 0's LastLog, \u00a77.4) and walks nodes 1-2. G4-M5's target (<= 40 budget for the hand-off check alone) requires isolating mpt_state_from_prev's own cost from the walk cost it's bundled with in this reference app; see the implementation report for the honest caveat on this isolation."
+    },
+    "S7_S8_handoff_live": {
+      "honest_handoff_passed": true,
+      "forged_handoff_rejected": true,
+      "forged_handoff_failure_message": "transaction IPQDJSH7RRPKSOGJ6MOTW5XH2YW5GZO55GYB2RCXDMJR2VFCDAPQ: logic eval error: assert failed pc=290. Details: app=1528, pc=290, opcodes=pushint 6; ==; assert",
+      "pass": true,
+      "note": "Both demonstrated via /v2/transactions/simulate with extra_opcode_budget (as the design doc's own \u00a77.4 hand-off measurement did for the hand-TEAL version). \u00a716.3: see G7_M5_real_submission below -- with inner-transaction budget donors now wired up, a REAL (non-simulated) submission of this same 2-segment group (and the full 3-segment 8-node account-proof group) now SUCCEEDS."
+    },
+    "G7_M5_real_submission": {
+      "single_segment_real_submission_ok": true,
+      "single_segment_error": "",
+      "receipt_group_no_donors_simulated": {
+        "total_consumed": 2024,
+        "per_txn_consumed": [
+          544,
+          1480
+        ],
+        "donors_sized": 2
+      },
+      "receipt_group_real_submission_with_donors_ok": true,
+      "receipt_group_real_submission_error": "",
+      "account_group_no_donors_simulated": {
+        "ok": true,
+        "total_consumed": 5538,
+        "per_txn_consumed": [
+          2155,
+          2060,
+          1323
+        ],
+        "failure": "",
+        "donors_sized": 6
+      },
+      "account_group_real_submission_with_donors_ok": true,
+      "account_group_real_submission_error": "",
+      "note": "\u00a716 fix, measured: part 1 shows whether the \u00a716.2 descend-duplication fix alone (no donors) is enough for a single segment to clear the base 700-opcode per-app-call ceiling with a REAL (non-simulated) submission. Parts 2 and 3 wire up \u00a77.6's named inner-transaction-donor escape hatch (\u00a716.3, following M1 \u00a79.1 / M4 \u00a716's pattern: cheap no-op inner app calls issued to raise the group's pooled budget before the heavy walk work runs) and demonstrate REAL, non-simulated, end-to-end submission of the full receipt-proof group (part 2) and the full 8-node account-proof group (part 3, the headline: the exact workload G6-M5 measures under simulate, now actually submitted for real). Donor counts are sized from a prior `simulate` reading of the SAME group with 0 donors -- exactly how a real relayer would size them -- then verified by an actual send_transactions call, not simulate."
+    }
+  }
+}
