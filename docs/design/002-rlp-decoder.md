@@ -958,3 +958,240 @@ works this way today (`rlp_scan(accountProof[7], 34)`).
 - **O-5 (M2 implementation)** — whether the plain-Puya scan loop already meets
   G1/G2. If it does, ship it and record the measured comparison; the `Op`
   exception is permission, not obligation (§2.4).
+
+---
+
+## 16. O-1/O-2 follow-up: raw-TEAL investigation, table-free fusion, and
+    early-exit retrieval (pulled forward per human direction, 2026-07-31)
+
+§9's own gate — "revisit [O-1/O-2] only if G1 fails or if profiling of a full
+M6 composition says so" — is true (G1 failed at 669/641 isolated, and G6's own
+profiling showed the flat full-table scan losing to the spike's O(index) walk
+on this proof's real indices, per the implementation-report note previously
+recorded in `bench/rlp_results.json`). This section documents what was tried,
+what was measured, what shipped, and why — all numbers below trace to a real
+`/v2/transactions/simulate` response via `bench/rlp_bench.py` against a
+dev-mode algod (recipe: `tests/fixtures/spike-reference/README.md`), per
+ARCHITECTURE.md's "no cost claim without a real simulate response" rule.
+
+### 16.1 Raw-TEAL injection: investigated, not available, not needed
+
+The installed toolchain (`puya` 0.6.0 / `puyapy` 5.9.0 / `algorand-python`
+3.5.0) was checked for any mechanism to splice hand-assembled TEAL — with
+manual, spike-style scratch-slot discipline (`RLP_ITEM_SUB`'s scratch
+100–108) — into an otherwise-Puya-compiled contract:
+
+- No inline-TEAL-block, raw-opcode-escape, or "compile this string as TEAL
+  and link it in" mechanism exists in `algopy`'s public surface or in
+  `puyapy`'s CLI/compiler internals (`puya/teal/`, `puya/ussemble/`,
+  `puyapy/awst_build/` were inspected directly). The one GitHub issue that
+  sounds related (`algorandfoundation/puya#247`, "add a python function that
+  can be called but it compiles to inline teal") was resolved by
+  `@subroutine(inline=True)` — a Puya-level forced-inlining hint, not a raw-
+  TEAL escape hatch; it inlines *compiled Puya output*, not hand-written
+  opcodes.
+- Post-compilation text-splicing (append a hand-written subroutine block to
+  the emitted `.teal` file and rewire a `callsub`, exactly how `mpt_bench.py`
+  assembled `RLP_ITEM_SUB`) is *technically* possible since TEAL is plain
+  text, but it was not pursued: it breaks the property that the `.py` source
+  is the sole source of truth for the compiled artifact (source maps, ARC-56
+  generation, and `algokit compile py` all stop matching reality), which is
+  exactly the maintainability argument ARCHITECTURE.md gives for choosing
+  Puya over hand-written TEAL in the first place. Splicing raw TEAL back in
+  for one function would reintroduce that cost for a library meant to
+  "attract external contributors" (ARCHITECTURE.md) while only helping one
+  function whose real bottleneck (see §16.3) turned out not to be reachable
+  by manual scratch discipline anyway.
+- **A real, useful, *legitimate* finding did come out of this investigation**:
+  `algopy.op.Scratch.store` / `load_uint64` / `load_bytes`, when called with a
+  Python-literal (compile-time-constant) slot index, compile to the
+  **immediate-form** `store <n>` / `load <n>` TEAL opcodes — the exact same
+  1-opcode cost the spike's hand-written scratch discipline used — not the
+  stack-indexed `stores`/`loads` opcodes the type signature might suggest.
+  This means genuine manual-scratch-slot management, spike-style, **is**
+  achievable without leaving Puya at all. It was prototyped (see §16.2) and
+  measured to bring **no net win** for this specific loop, so it is not
+  shipped — but the finding itself is recorded here since it contradicts the
+  design doc's original assumption (§2.4: "no manual store/load scratch
+  management... let Puya place locals") that manual scratch was categorically
+  unavailable short of raw TEAL. It remains available as a tool for a future
+  module if a loop's bottleneck is genuinely stack-shuffle-bound rather than
+  control-flow-bound (§16.3 explains why this loop's bottleneck is the
+  latter).
+
+**Conclusion for step 1**: raw TEAL injection is not cleanly achievable in
+this toolchain without abandoning Puya's single-source-of-truth property, and
+— per the measurement in §16.2 — it would not have helped this loop even if
+it were. No raw TEAL was added; everything below is ordinary Puya plus one
+new `Op`-level loop body, exactly like the existing `rlp_scan_n`/
+`nibbles_equal` exception (§2.4).
+
+### 16.2 O-2 (table-free fusion): tried, measured, NOT shipped as originally scoped
+
+§9's O-2 sketch — "capture the two spans the caller asked for... skipping the
+table" — was implemented literally: a full 17-item walk (same control flow as
+`rlp_scan_n`) that, instead of writing a 2-byte table entry per item, compares
+the loop counter against two `want` indices and conditionally records a
+matching item's position. Three variants were built and measured by direct
+compiled-TEAL opcode counting (cross-checked against real simulate numbers for
+the shipped functions in §16.3):
+
+| Variant | Per-item loop-body cost (measured from compiled TEAL) |
+|---|---|
+| Current `rlp_scan_n` (builds table) | ~35 opcodes/item |
+| Table-free capture, plain Puya locals for `pos`/`n`/captures | ~37 opcodes/item |
+| Table-free capture, `pos`/`n` in `op.Scratch` slots (immediate form) | ~45 opcodes/item |
+| Table-free capture, `pos`/`n` as Puya locals, captures in `op.Scratch` | ~37 opcodes/item |
+
+**None of the three table-free variants beat the existing table-based loop.**
+The ~8 opcodes/item saved by not writing a table entry (`itob`/`extract`/
+`concat` plus their stack shuffling) is offset almost exactly by the ~7-10
+opcodes/item cost of the two added `if n == want0` / `if n == want1`
+conditional-capture checks. The `op.Scratch`-for-loop-locals variant was
+*worse*, not better: moving `pos`/`n` to scratch trades Puya's stack-shuffle
+cost (`dig`/`swap`/`cover`, already fairly tight for only two loop-carried
+values) for explicit `load`/`store` traffic every iteration, which is not
+free either. **This is the real, measured, load-bearing finding of this
+section**: for a *full* 17-item walk, the dominant cost is not the table
+write — it is the fixed per-item control flow (the `getbyte` + 4-way
+prefix-class branch + loop-condition check + counter increment that every
+variant above must pay identically), which is roughly 30 opcodes/item no
+matter what side-effect (if any) accompanies it. §9's estimate that O-2 would
+be "the first thing to try if G1 fails" and would recover ~51 budget on a
+branch node was not borne out once actually measured against Puya's real
+codegen; it undersold how much of the loop's cost is unavoidable control
+flow, not table bookkeeping. General table-free multi-item capture
+(`rlp_scan_capture`) was therefore **not added** — it would be new API
+surface with no measured benefit over the existing `rlp_scan`/
+`rlp_table_item` for the general N-arbitrary-items case.
+
+**Where O-2 *does* win, and is shipped**: MPT extension/leaf nodes are always
+**exactly 2 items**, which is a degenerate case a general "walk and capture"
+loop doesn't need to reach for — item 0 always starts at the list's
+`payload_off` (no walk required to find it at all), and item 1's start is
+implied directly by item 0's own `(content_off, content_len)`. This
+eliminates the loop *entirely*, not just its table-write cost, which is why
+it wins where general-purpose table-free capture did not. This is
+`rlp_scan2` (`contracts/primitives/rlp/core.py`) — list-header decode plus
+two `rlp_item_header` calls plus one bounds assert, no `while`, no table, no
+per-item branch chain.
+
+### 16.3 O-1 (early exit): implemented, and it is what actually fixes G6
+
+`rlp_scan_upto(data, start, want)` (`core.py`) walks only through item
+`want`, then decodes it — items past `want` are never visited. This is
+exactly §9's O-1 sketch. It reintroduces O(want) index-scaling, exactly as
+§3.1 predicted and explicitly accepted as the tradeoff for the "early exit"
+variant, and it does **not** learn `n_items` (no R3/R6-equivalent arity
+check) — a caller that needs that structural cross-check uses
+`rlp_scan`/`mpt_node_scan`. Given TP-1 (§1.3), that check was defense-in-depth
+on already-hash-committed bytes, not load-bearing; dropping it here for the
+performance win is a deliberate, documented trade, not an oversight.
+
+Two implementation details mattered enough to measure explicitly:
+
+- `_read_len`, `rlp_list_header`, `rlp_item_header` were initially all marked
+  `@subroutine(inline=True)` to remove `callsub`/`proto`/`retsub` glue from
+  `rlp_scan_upto`/`rlp_scan2`'s call sites (a real ~10-20 opcode/call saving).
+  This was **reverted**: because these three functions are each used from
+  multiple call sites across the file (the hot loop's own duplicated copy,
+  `rlp_table_item`, and now `rlp_scan2`/`rlp_scan_upto`), forcing inline
+  duplicated their bodies at every site and blew gate G5 from 668 B to
+  ~1,417 B — far over the 900 B target and a real threat to the 8,192 B
+  per-call program cap M5/M6 must share (§2.3). They were kept as ordinary
+  shared subroutines; the resulting compiled size is **839 B** (still under
+  900 B) at the cost of paying one `callsub` per invocation instead of zero.
+- Branch-node items in the real fixture set are ~universally `0x80` (empty)
+  or `0xa0` (32-byte hash) — the same "100% of real data" observation §3.2
+  made for the table loop applies unchanged to the early-exit loop, since it
+  reuses the identical prefix-classification arithmetic.
+
+**Measured per-item skip cost, real branch node (`accountProof[0]`), isolated
+from harness argument-marshalling tax:**
+
+| `want` | isolated cost | spike's own number at this index (`MPT_RESULTS.md` §1) |
+|---|---|---|
+| 0 | 112 | 62 |
+| 8 | 360 | 318 |
+| 15 | 577 | 542 |
+
+The honest headline: **Puya-compiled `rlp_scan_upto`, with real structural
+bounds checks (R1/R2/R7/R9) that the spike's unchecked hand-TEAL never paid
+for, lands within ~35-50 budget of the spike's own unchecked per-item cost at
+every index measured** — i.e. roughly at parity, not dramatically better or
+worse. This is a materially different (and more honest) finding than the
+original design doc's framing that Puya's overhead was categorically ~3x a
+hand-tuned loop (§2.4's table): that framing was accurate for the
+*table-building* loop (§8.4's G1 miss), not for a loop that does the same
+per-item skip work the spike's loop did. The two are not the same
+comparison, and conflating them would have been the wrong lesson to draw.
+
+### 16.4 What shipped, and the real before/after numbers
+
+Shipped in `contracts/primitives/rlp/core.py`:
+- `rlp_scan2(data, start) -> (off0, len0, kind0, off1, len1, kind1)` — O-2,
+  specialised to exact-2-item nodes (no loop).
+- `rlp_scan_upto(data, start, want) -> (content_off, content_len, kind)` —
+  O-1, early-exit single-item retrieval, `"R9"` on out-of-range `want`.
+- `rlp_scan`/`rlp_scan_n`/`rlp_table_item`/`rlp_table_count`/`mpt_node_scan`
+  are **completely unchanged** — still the right tool for repeated access to
+  one node (G2, delta=0, untouched) and for differential testing / any
+  caller that needs the full table and an explicit arity check.
+- `mpt_node_scan`'s docstring was updated to point new callers at
+  `rlp_scan2`/`rlp_scan_upto` for the common one-or-two-item descent, while
+  remaining itself unchanged and still available.
+
+`bench_app.py`'s G1/G3/G6 probes were re-pointed to the new entry points
+(`RlpVerifyWalkBare` now uses `rlp_scan_upto`/`rlp_scan2`; the pre-existing
+table-based logic was preserved under `RlpVerifyWalkBareTable` for
+before/after comparison). Real measured numbers, both before and after, from
+`bench/rlp_bench.py` against a live dev-mode algod
+(`bench/rlp_results.json`):
+
+| Gate | Target | Before (table path) | After (§16 fast path) | Verdict |
+|---|---|---|---|---|
+| G1 (branch node, single access) | ≤300 | 674 (646 isolated) | index-dependent: 112 (want=0) → 608 (want=16) isolated; 360 at want=8 | Still fails at mid/high `want`; **now index-dependent by design** — see §16.5 |
+| G2 (index independence) | ≤10 | delta=0 | **unchanged** (still `rlp_scan`/`rlp_table_item`) | Pass, untouched |
+| G3 (2-item node, both items) | ≤90 | 291 (255 isolated) | 192 (164 isolated) | Improved 34%, **still fails** the absolute target |
+| G4 (nibble comparison) | ≤20 | pass (isolated) | unchanged | Pass, untouched |
+| G5 (compiled size) | ≤900 B | 668 B | 839 B | Pass (171 B of headroom consumed by the two new functions) |
+| **G6 (real 8-node composition)** | **beat spike's 3,276** | **5,302** | **2,566** | **Pass — beats the spike by ~22%** |
+
+G6 — explicitly the gate that matters, since it is the only one measuring the
+proof's actual real-world access pattern rather than a synthetic single-op
+call — now passes with a comfortable margin. The 8-hop real account proof
+(7 branch-node hops via `rlp_scan_upto` at the real derived child indices
+10, 11, 1, 4, 13, 6, 8, plus one `rlp_scan2` leaf hop) cost 2,566 total
+opcode budget, against the spike's 3,276 and this module's own pre-§16
+5,302.
+
+### 16.5 Honest gaps that remain
+
+- **G1 and G3's absolute numeric targets are still not met**, even after
+  this work. G3 improved substantially (291→192) but the ≤90 target assumed
+  a per-operation cost the actual Puya-compiled control flow does not reach
+  even with the loop fully eliminated — the remaining ~164 isolated budget is
+  list-header decode + two `rlp_item_header` calls (each with a real
+  `callsub`, since inlining them was reverted for size reasons, §16.3) plus
+  one bounds assert; there is no further loop to cut. G1 no longer has a
+  single meaningful pass/fail number at all once early exit is in the mix —
+  cost is a function of `want`, by design, and the design doc's original
+  single-number gate does not cleanly survive that. Both are reported
+  honestly in `bench/rlp_results.json` rather than redefined to force a
+  "pass".
+- **G1/G3's continued misses do not threaten the module's actual purpose.**
+  G6 — built from the exact real access pattern M5/M6 will use — is the
+  ground truth this design doc has always said it should be judged on
+  (§8.4: "G6 ... is the honest apples-to-apples check that M2 is a win in
+  situ and not just in microbenchmark"), and it passes with real, reproduced
+  (two independent live-algod runs, both 2,566) numbers.
+- **`rlp_scan_upto` trades away the R3/R6 arity check.** This is a
+  documented, deliberate choice licensed by TP-1, not a silent weakening —
+  but it means a caller that mixes `rlp_scan_upto` with logic that assumes
+  "this function call implies the node had exactly 2 or 17 items" would be
+  wrong to assume that; M5's design doc must state which entry point it uses
+  per call site and why, when it is written.
+- **Program size headroom shrank from 232 B to 61 B** (668→839 against the
+  900 B gate). This is fine for M2 alone but is a real constraint M5/M6's own
+  design docs need to account for when budgeting their share of the 8,192 B
+  per-call cap (§2.3) — M2's own headroom is smaller than it was.

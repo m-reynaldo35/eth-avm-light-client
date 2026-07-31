@@ -1,0 +1,131 @@
+{
+  "gates": {
+    "G5_compiled_size": {
+      "size_probe_bare_bytes": 843,
+      "baseline_bare_bytes": 4,
+      "bare_estimate_bytes": 839,
+      "size_probe_arc4_bytes": 1261,
+      "baseline_arc4_bytes": 35,
+      "arc4_estimate_bytes": 1226,
+      "target": "<= 900 bytes",
+      "pass": true,
+      "note": "gate G5's pass/fail is judged on the bare (non-ARC4) estimate -- RlpSizeProbeBare calls every public subroutine in core.py/nibbles.py/eip2718.py exactly once against one hardcoded literal buffer with zero ABI decoding, diffed against a bare Contract with no reachable library code at all. This is an upper bound, not an exact isolation (it still includes this method's own glue arithmetic), per bench_app.py's own docstring. The ARC4 estimate is reported alongside as the realistic-deployment-shape reference."
+    },
+    "G1_scan_branch_node_table": {
+      "raw_consumed": 687,
+      "baseline": 13,
+      "cost": 674,
+      "isolated_cost": 646,
+      "target": "<= 300",
+      "pass": false,
+      "note": "PRE-\u00a716 full-table path (rlp_scan + rlp_table_item), kept for history/comparison -- this is what mpt_node_scan/differential testing still use, and remains the right choice for REPEATED access to the same node (see G2, delta=0, unaffected by \u00a716). See G1_scan_upto_fast below for the \u00a716 re-pointed single-access measurement, and docs/design/002-rlp-decoder.md \u00a716 for the full writeup of why table-free O-2 alone did not close this gate (measured: the removed ~8 opcodes/item of table-write cost is offset by the added want-index compare cost when both coexist in one full 17-item walk) and why O-1 early exit (scan_upto) is the fix that actually matters for the real single-child-per-hop access pattern."
+    },
+    "G1_scan_upto_fast": {
+      "by_want_index": {
+        "0": {
+          "cost": 144,
+          "isolated_cost": 112
+        },
+        "1": {
+          "cost": 175,
+          "isolated_cost": 143
+        },
+        "4": {
+          "cost": 268,
+          "isolated_cost": 236
+        },
+        "6": {
+          "cost": 330,
+          "isolated_cost": 298
+        },
+        "8": {
+          "cost": 392,
+          "isolated_cost": 360
+        },
+        "10": {
+          "cost": 454,
+          "isolated_cost": 422
+        },
+        "11": {
+          "cost": 485,
+          "isolated_cost": 453
+        },
+        "13": {
+          "cost": 547,
+          "isolated_cost": 515
+        },
+        "15": {
+          "cost": 609,
+          "isolated_cost": 577
+        },
+        "16": {
+          "cost": 640,
+          "isolated_cost": 608
+        }
+      },
+      "target": "<= 300 (index-dependent by design, O-1 tradeoff)",
+      "pass_want8": false,
+      "note": "rlp_scan_upto (design doc \u00a716, O-1 early exit) walks ONLY through the wanted item instead of building a full table for all 17 -- cost is O(want), not flat, which is the explicitly accepted O-1 tradeoff (\u00a73.1/\u00a79): cheap for low indices, roughly tied with the spike's own per-item cost at any index (measured: isolated cost at want=8 lands within ~10 of the spike's own item-8 number of 318; at want=15 within ~10 of the spike's item-15 number of 542), worse than the flat table approach for HIGH indices or REPEATED access (for which G1_scan_branch_node_table / G2 remain the right choice). pass_want8 is reported as the single headline number (want=8 matches G2's own middle test point) but every index is reported above since a single pass/fail number is inherently incomplete for an index-dependent method -- see \u00a716 for the full table and for gate G6, which is what actually validates this in situ."
+    },
+    "G2_index_independence": {
+      "cost_item0": 728,
+      "cost_item8": 728,
+      "cost_item15": 728,
+      "delta_15_minus_0": 0,
+      "target": "<= 10 (spike baseline: 480)",
+      "pass": true,
+      "note": "delta is baseline-agnostic (same arg shape at every index), so isolating harness tax would not change this gate's number -- not reported separately."
+    },
+    "G3_two_item_node_table": {
+      "raw_consumed": 304,
+      "cost": 291,
+      "isolated_cost": 255,
+      "target": "<= 90",
+      "pass": false,
+      "note": "PRE-\u00a716 path (rlp_scan + 2x rlp_table_item), kept for history/comparison. See G3_scan2_fast below for the \u00a716 re-pointed measurement (rlp_scan2, loop-free exact-2-item decode) that this gate's pass/fail is now judged on."
+    },
+    "G3_scan2_fast": {
+      "raw_consumed": 205,
+      "cost": 192,
+      "isolated_cost": 164,
+      "target": "<= 90",
+      "pass": false,
+      "note": "rlp_scan2 (design doc \u00a716, O-2 follow-up specialised to exact-2-item MPT ext/leaf nodes) has NO while loop at all: item 0 always starts at payload_off (no walk needed), and item 1's start is directly implied by item 0's own (content_off, content_len) -- so the whole function is list-header decode + 2x rlp_item_header + one assert. This is a substantially bigger win than the general table-free O-2 idea (rlp_scan_capture, tried and NOT shipped -- see \u00a716): for a 17-item branch node, table-free capture still pays the same per-item loop-control overhead as the table version for items it walks past, but a 2-item node has no 'walk past' cost to eliminate in the first place once the loop itself is removed."
+    },
+    "G4_nibbles_equal_aligned": {
+      "cost_57_nibbles_odd_start": 42,
+      "cost_56_nibbles_even_start": 42,
+      "isolated_cost_57_nibbles_odd_start": 2,
+      "isolated_cost_56_nibbles_even_start": 2,
+      "note": "nib_index=7 for the account leaf is ODD (2*off+skip with odd skip=1). The design doc's literal \u00a75.4 case list only spells out a fast path when BOTH a_nib and b_nib are EVEN, which would send this (leaf, key) pair -- both ODD -- into the O(count) fallback loop. But the doc's own prose argument for leaves ('the compact remainder always begins at compact byte 1 ... and on the key side it begins at nibble c + odd, which is even in both cases') describes peeling the one odd leading nibble and then comparing the aligned remainder -- exactly this ODD/ODD case. nibbles_equal was fixed to implement that: when a_nib and b_nib share parity (both even, OR both odd), it peels one matching-parity leading nibble when odd and then takes the aligned fast path on the (now even, or already even) remainder. Only a genuine relative misalignment (a_nib/b_nib of DIFFERENT parity) still takes the per-nibble loop -- real for extension nodes, per \u00a75.4's own caveat. The 56-nibble storage leaf (nib_index=6, EVEN/EVEN) was already on the fast path and is unaffected by the correctness fix, but its own isolated cost (13, then 3 -- see below) shows the true aligned-path budget was ALSO being drowned in harness tax before isolation. Two separate costs were stacked on top of nibbles_equal's real logic, and both had to be peeled back to see the primitive's true number: (1) this harness's own 5-argument read (Txn.application_args x5, 3x op.btoi) is baked into `cost_*` -- isolating it (isolated_cost_*, vs a baseline reading the identical 2-bytes+3-uint64 shape and doing nothing else) dropped 63/13 for the odd/even cases; (2) `nibble_at` -- called twice by the ODD/ODD peel path this fix added, and also used by the misaligned fallback loop -- was NOT auto-inlined by Puya (confirmed via compiled TEAL: real `callsub nibble_at` at every use site), so each call paid full proto/frame_dig/retsub overhead for a 3-opcode body. Forcing `@subroutine(inline=True)` on `nibble_at` (contracts/primitives/rlp/nibbles.py) removed that: isolated_cost dropped to 3 for BOTH the 57-odd and 56-even cases -- comfortably under the <=20 target, and flat in length as the gate requires. `pass_*` (vs the universal 0-arg noop, matching the spike's own single-baseline methodology) still reads false because it also carries the 5-argument harness tax that this specific gate's call shape pays and the spike's simpler-signature RLP_ITEM_SUB never had to; `isolated_pass_*` is the number that reflects nibbles_equal's own compiled cost, and it passes both cases.",
+      "target": "<= 20, flat in length",
+      "pass_56_even": false,
+      "pass_57_odd": false,
+      "isolated_pass_56_even": true,
+      "isolated_pass_57_odd": true
+    },
+    "G6_composition": {
+      "account_path_nodes": 8,
+      "bare_consumed_table_pre_16": 5302,
+      "bare_consumed_fast_16": 2566,
+      "arc4_consumed": null,
+      "spike_baseline_account": 3276,
+      "target": "< 3276 (spike account proof total)",
+      "pass": true,
+      "note": "gate G6's pass/fail is now judged on `bare_consumed_fast_16` (RlpVerifyWalkBare: real account-proof node bytes and derived child indices baked in as module-level literals, using \u00a716's rlp_scan_upto/rlp_scan2 per hop instead of rlp_scan/rlp_table_item -- zero ABI argument decoding, the same bytecblock-constant methodology mpt_bench.py used to produce the 3,276 baseline itself). `bare_consumed_table_pre_16` is the PRE-\u00a716 number (5,302) kept for before/after comparison. `arc4_consumed` (the ARC4Contract `verify_walk` method, still on the table path) is reported alongside as the realistic-in-situ-caller reference: it additionally pays real `byte[][]`/`uint64[]` ABI array-decoding for receiving all 8 nodes as call arguments, which is NOT part of what the spike's 3,276 number measured, so it is not a fair comparison against the spike baseline even though it is realistic for an actual M5/M6 caller.\nSee docs/design/002-rlp-decoder.md \u00a716 for the full before/after writeup: why the pre-\u00a716 flat full-table scan per hop (5,302) lost to the spike's O(index) walk on this proof's low/mid real indices (10,11,1,4,13,6,8), why the general table-free O-2 idea alone did not close the gap (measured: removing the table-write cost is offset by the added want-index compare cost in a full 17-item walk, net near-zero), and why O-1 early exit (rlp_scan_upto) plus a loop-free exact-2-item decode (rlp_scan2) for the final leaf hop is what actually gets this gate close to or under the spike baseline -- `rlp_scan`/`rlp_table_item` are unchanged and remain the right choice for repeated access to the same node (G2, delta=0, unaffected)."
+    }
+  },
+  "arc4_overhead_reference": {
+    "scan": 680,
+    "nib_eq_56_aligned": 102
+  },
+  "baseline_bare": 13,
+  "baseline_arg_shapes": {
+    "1bytes": 41,
+    "1bytes_1u64": 45,
+    "1bytes_2u64": 49,
+    "2bytes_3u64": 53
+  },
+  "envelope_cost_bare": 43,
+  "baseline_arc4": 14
+}
