@@ -1,0 +1,42 @@
+release: v1.6.0-beta.0
+source:
+  general/  <- https://github.com/ethereum/consensus-spec-tests/releases/download/v1.6.0-beta.0/general.tar.gz
+  minimal/  <- https://github.com/ethereum/consensus-spec-tests/releases/download/v1.6.0-beta.0/minimal.tar.gz
+
+extraction recipe (same shape as docs/design/003-ssz-verifier.md Appendix B):
+
+  curl -sL https://github.com/ethereum/consensus-spec-tests/releases/download/v1.6.0-beta.0/general.tar.gz \
+    | tar -xz --wildcards 'tests/general/*/bls/eth_fast_aggregate_verify/*'
+  curl -sL https://github.com/ethereum/consensus-spec-tests/releases/download/v1.6.0-beta.0/minimal.tar.gz \
+    | tar -xz --wildcards '*/light_client/sync/*' '*/light_client/update_ranking/*'
+
+  then `tests/general -> general/`, `tests/minimal -> minimal/`.
+
+contents:
+  general/altair/bls/eth_fast_aggregate_verify/bls/   12 cases
+      The only BLS suites present in this release are `eth_fast_aggregate_verify`
+      and `eth_aggregate_pubkeys`; the older phase0 `verify` / `aggregate` /
+      `fast_aggregate_verify` / `hash_to_G2` suites are NOT in v1.6.0-beta.0.
+      `eth_fast_aggregate_verify` is the suite that pins the Ethereum
+      domain-separation tag `BLS_SIG_BLS12381G2_XMD:SHA-256_SSWU_RO_POP_`,
+      because its signatures were produced under it.
+  minimal/<fork>/light_client/sync/pyspec_tests/       altair..fulu, 4 cases each
+      Full light-client sync scenarios: bootstrap.ssz_snappy, N update_*.ssz_snappy,
+      steps.yaml, meta.yaml (genesis_validators_root, fork digests), config.yaml
+      (fork versions/epochs). MINIMAL preset: SYNC_COMMITTEE_SIZE = 32,
+      SLOTS_PER_EPOCH = 8, EPOCHS_PER_SYNC_COMMITTEE_PERIOD = 8.
+  minimal/<fork>/light_client/update_ranking/pyspec_tests/
+      `is_better_update` ordering vectors. M4 v1 deliberately does not implement
+      `is_better_update` / `best_valid_update` (design doc 004 §6.6); retained so
+      that decision can be revisited with data.
+
+notes:
+  * `.ssz_snappy` here is RAW snappy block format, not the snappy FRAME format.
+    Use `cramjam.snappy.decompress_raw`, not `cramjam.snappy.decompress`.
+  * Spec source pinned alongside: consensus-specs tag v1.6.0-beta.0
+    (configs/mainnet.yaml, presets/mainnet/altair.yaml,
+     specs/altair/light-client/sync-protocol.md,
+     specs/electra/light-client/sync-protocol.md).
+  * The SSZ single_merkle_proof subset lives separately under
+    tests/fixtures/ssz/consensus-spec-tests/ (vendored by M3 from the same
+    release) and is what pins design doc 004's fork-gindex table.
