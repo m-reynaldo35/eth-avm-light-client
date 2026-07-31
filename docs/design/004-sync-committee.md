@@ -1603,3 +1603,226 @@ SSZBenchmark verify_branch, gindex 25/54/105/169               435 / 518 / 601 /
 SSZVerifier.verify_branch (ARC-4 wrapper)                      644
 MerkleizeBenchmark, n=4,8,16,32,63          1103, 1933, 3495, 6521, 11839
 ```
+
+## 16. Post-approval fix: the box-reference cap and the pooled box-write/read budget
+
+Filed the same way M2 filed its own post-approval optimization (§16 of
+`002-rlp-decoder.md`): what was found during live testing, what was measured
+against a real dev-mode algod (never assumed — `ARCHITECTURE.md`'s own rule),
+what was changed, and an honest account of what is still open.
+
+### 16.1 What was found
+
+Live testing (against a real dev-mode algod, `tests/fixtures/spike-reference/`
+recipe) surfaced a real, load-bearing gap in §8.3's install session, not a
+theoretical one: `install_open_boxes` created 8 key boxes (`k:<gen>:0..7`)
+plus 1 session box (`s:<gen>`) — 9 box references — in a single call. This
+failed with a direct protocol error, not a simulate artifact. Fixing it
+surfaced two FURTHER instances of essentially the same constraint, both also
+found empirically rather than anticipated:
+
+1. `bootstrap` independently reads the `forks` box (for its `current_sc_gindex`
+   lookup) in the same call that used to create the 8 key boxes — 8 + 1 = 9
+   references again, for a different reason than (1) above.
+2. Touching an *existing* box via `box_extract`/`box_replace` (as
+   `install_process_chunk`/`install_process_finalize` do against the session
+   and key boxes) charges the pooled budget the box's **full declared size**,
+   not the touched slice — so even a single-member `install_chunk` call
+   touches 6,144 + 424 = 6,568 bytes' worth of budget, not the ~500 bytes it
+   actually reads/writes.
+
+### 16.2 What was measured
+
+All of the following are real numbers off a live dev-mode `algod`
+(go-algorand, `docker` recipe in `tests/fixtures/spike-reference/README.md`,
+same harness pattern as Appendix A/B), not documentation citations —
+`tests/fixtures/spike-reference/box_probe/` in this pass's working notes
+reproduces the experiments; `tests/sync_committee/test_install_live.py` is
+the load-bearing, checked-in version.
+
+- **Box-reference cap is exactly 8, per TRANSACTION, and it is a structural
+  field-length check, not an opcode-budget or simulate artifact.** A 9th
+  entry in one transaction's `boxes` array fails before the AVM program even
+  runs: `TransactionPool.Remember: ... invalid : tx.Boxes too long, max
+  number of box references is 8`. `Box.create` consumes a reference exactly
+  like `Box.get`/`Box.extract`/`Box.replace` — no special case.
+- **There is a separate, real byte-budget cap, and it is POOLED ACROSS THE
+  WHOLE ATOMIC GROUP, not per transaction.** Creating (zero-filling) a
+  6,144-byte box with only 1 box reference fails: `write budget (2048)
+  exceeded 6144`. With 8 references: `write budget (16384) exceeded 18432`
+  (the group's 3rd 6,144 B box create, since 2×6,144=12,288 < 16,384 <
+  3×6,144=18,432). Both data points agree exactly on **2,048 bytes of write
+  budget per box reference** — not the 1,024 B/ref this design doc's own §8.2
+  cited (that number was for reads, and turned out to also need
+  re-measuring, see below; it was never independently verified against a
+  real write-budget error before this pass).
+- **The budget pools across sibling transactions in the same atomic group,
+  not just within one transaction.** A transaction whose own box references
+  cannot cover its writes still succeeds if a sibling transaction in the same
+  group carries the shortfall in additional box references — including
+  references to box names that transaction never touches. Confirmed by
+  directly contrasting a solo transaction (4 real refs + 4 padding refs to
+  untouched names, needing 24,576 B against its own 16,384 B budget — fails)
+  against the identical write split across a 2-transaction group (4 real refs
+  on the writing transaction, 8 more unused refs on a sibling — succeeds,
+  24,576 ≤ (4+8)×2,048 = 24,576 exactly).
+- **Duplicate references to the same box name — both within one
+  transaction's own array and across sibling transactions in a group — each
+  add their own 2,048 B to the pool.** Confirmed both ways: one transaction
+  referencing the same already-created box 3 times in its own `boxes` array
+  raised its solo budget to 3×2,048=6,144, exactly enough for a 6,144 B
+  touch that failed at 2×2,048=4,096; and a 2-transaction group where the
+  second transaction's "padding" refs are literal duplicates of the first
+  transaction's real refs (not novel phantom names) behaves identically to
+  genuinely distinct padding names.
+- **Touching an existing box (`box_extract`/`box_replace`, as opposed to
+  `box_create`) charges the pool the box's full DECLARED size, once per box
+  per group, regardless of how many operations touch it or how much of it
+  they actually read/write.** A 384-byte `box_replace` into an existing
+  6,144-byte box fails at 1 reference (`box read budget (2048) exceeded`);
+  extracting 424 bytes from that same 6,144-byte box fails identically at 1
+  reference. Touching the box via `box_extract` *and then* `box_replace` in
+  one transaction costs the same 6,144 total as touching it once — not
+  double — confirming the charge is once-per-box-per-group at full size, not
+  per-operation.
+- **Total install-open bytes: 8 × 6,144 + 424 = 49,576 B → minimum 25 pooled
+  box references** (`ceil(49576/2048)`), which at 8 refs/txn forces **at
+  least 4 transactions** in the box-opening phase, independent of the
+  8-vs-9-name reference-cap argument alone (which by itself would only force
+  2).
+
+### 16.3 What was changed
+
+`inst_state` (§8.2) gained two intermediate values instead of one, because
+the fix needed to decouple THREE things that used to happen in one call:
+validating inputs (which may need to read `forks`), creating the 8 key
+boxes (exactly the reference cap, no room for anything else in that
+transaction), and creating the session box:
+
+```
+IDLE  →  VALIDATED  →  OPENING_BOXES  →  INSTALLING
+      (bootstrap/       (install_open_    (install_open_
+       install_begin)    keys)             session)
+```
+
+- `bootstrap`/`install_begin` now ONLY validate and reserve a generation id
+  (`inst_gen`, `inst_period`, `inst_root`, `inst_cursor := 0`), landing on
+  `INST_STATE_VALIDATED`. They create no boxes. `bootstrap` touches at most
+  the `forks` box.
+- `install_open_keys` (new ARC-4 method, shared by both flows): requires
+  `INST_STATE_VALIDATED`, creates `k:<inst_gen>:0..7` (exactly 8 box refs),
+  moves to `INST_STATE_OPENING_BOXES`.
+- `install_open_session` (new ARC-4 method): requires
+  `INST_STATE_OPENING_BOXES`, creates `s:<inst_gen>` (1 real ref, room for
+  padding), moves to `INST_STATE_INSTALLING` — the only state
+  `install_chunk`/`install_finalize` accept (§8.3's original guard,
+  unchanged, just renumbered).
+- The extra box references needed to clear the 25-reference pooled-budget
+  floor are supplied by the CALLER as ordinary box refs on any sibling
+  transaction in the group — the existing `noop_budget()` filler (whose
+  docstring already anticipated "carries extra box references") is the
+  natural vehicle; no new ABI surface was needed for padding itself.
+- `install_abort` now branches on all three non-idle states: `VALIDATED`
+  (no boxes exist, nothing to delete), `OPENING_BOXES` (only key boxes
+  exist, `install_abort_key_boxes`), `INSTALLING` (both exist,
+  `install_abort_boxes`, unchanged).
+- **Security property preserved, and strengthened by construction, not just
+  by convention:** all of `bootstrap`/`install_begin` →
+  `install_open_keys` → `install_open_session` MUST be submitted as sibling
+  transactions in one atomic group. Algorand's all-or-nothing group
+  guarantee means a partially-open box set (key boxes without a session box,
+  or a reserved generation with no boxes at all) can never be observed by
+  any OTHER, later group — if any phase fails or is omitted, the entire
+  group, including box creates already run within it, rolls back together.
+  The explicit `inst_state` checks are still enforced (defense in depth
+  against a malformed group that sequences these calls incorrectly within
+  itself), but the actual "nothing can observe a partial box set"
+  correctness property comes from atomicity, not from the state guard
+  alone — worth being explicit about, since it is easy to mistake the state
+  guard for the whole mechanism.
+- Files touched: `contracts/sync_committee/constants.py` (new `inst_state`
+  values, `MAX_BOX_REFS_PER_TXN`, `BOX_WRITE_BUDGET_BYTES_PER_REF`,
+  `INSTALL_BOX_WRITE_BYTES`, `MIN_BOX_REFS_FOR_INSTALL_OPEN`),
+  `contracts/sync_committee/install.py` (`install_open_key_boxes`,
+  `install_open_session_box`, `install_abort_key_boxes` replacing the single
+  `install_open_boxes`/`install_abort_boxes`), `contracts/sync_committee/verifier.py`
+  (`bootstrap`/`install_begin` slimmed to validation-only, new
+  `install_open_keys`/`install_open_session` ARC-4 methods, `install_abort`
+  three-way branch), `tests/sync_committee/conftest.py` (the live harness's
+  `submit`/`call_group` now accept a PER-CALL `boxes` override, needed
+  because sibling transactions in the box-opening group each carry a
+  different `boxes` array), and the new
+  `tests/sync_committee/test_install_live.py`.
+
+### 16.4 Live result
+
+`tests/sync_committee/test_install_live.py`, run against a real dev-mode
+algod, 4/4 passing:
+
+- `test_bootstrap_box_opening_completes_live` — the exact call sequence that
+  used to fail with a protocol error now commits as one real, COMMITTED
+  4-transaction atomic group (`bootstrap` + `install_open_keys` +
+  `install_open_session` + one padding `noop_budget`, 8+8+8+1=25 references).
+  All 9 boxes exist afterward with the right sizes; `inst_state` reads back
+  as `INSTALLING`, not stuck at an intermediate value.
+- `test_install_chunk_proceeds_after_box_opening_fix` — continues the same
+  session with a real `g1_bind`-passing `install_chunk` call (genuine
+  subgroup-valid BLS12-381 points, real compressed forms), confirming the
+  state guard correctly unblocks `install_chunk` once box-opening completes.
+  Run via `simulate` with extra opcode budget rather than a real commit,
+  deliberately: `g1_bind` alone costs ~1,966 against a bare transaction's
+  700, and supplying that for real needs the inner-call donor chain §9
+  already designs for — a separate, pre-existing mechanism this check does
+  not need to re-exercise to prove the box-mechanics fix. Simulate still
+  enforces the real reference cap and pooled budget (both measured against
+  it directly during this pass), so this remains a genuine box-mechanics
+  test.
+- `test_install_chunk_rejected_while_validated` /
+  `test_install_open_session_rejected_before_keys_opened` — the negative
+  half: on a separate fresh app that has run only `bootstrap` (state
+  `VALIDATED`, zero boxes created), both `install_chunk` and
+  `install_open_session` genuinely fail on-chain.
+
+Full project test suite: **284/284 passing** (280 pre-existing + these 4),
+confirmed after every code change in this pass, not just at the end.
+
+### 16.5 Honest gaps that remain
+
+- **§8.5's per-group budget table is unaffected for the per-key cost of
+  `install_chunk`/`install_finalize` itself** (that table is about opcode
+  budget, which this pass did not touch), but **the box-reference
+  accounting for `install_chunk` calls across the full 512-member install
+  has NOT been re-derived** in light of 16.1 item 2 above (full-box-size
+  charge per touch). Every `install_chunk` call, regardless of how many
+  members it processes, touches one 6,144 B key box plus the 424 B session
+  box — 6,568 B, needing >= 4 pooled box references — where §8.5's original
+  cost table implicitly assumed something closer to 2. This does not change
+  §8.5's **8-group** estimate (that estimate is opcode-budget-bound, and
+  each group already carries far more than 4 spare box-reference slots
+  across its transactions), but it is a real addition to what a full
+  install's box-reference bookkeeping must account for, and it has not been
+  checked end-to-end against a real 512-member, 8-group install. Flagged
+  here rather than silently assumed away.
+- **The group count did NOT grow.** The box-opening fix adds transactions
+  (4, up from 1) to the group that already contains `bootstrap`/
+  `install_begin`, but stays within that group's existing 16-top-level-txn
+  slot budget — §8.5's **8 groups for a full install** estimate is
+  unchanged. This was verified by construction (4 of 16 slots used) and by
+  the live test committing all 4 as one group, not re-derived from a full
+  512-member run.
+- **A full 512-member `install_chunk`/`install_finalize` sequence was not
+  run live** in this pass (expensive, and not what was blocked — the
+  box-opening phase was the actual, confirmed protocol-error blocker this
+  task targeted). One small real `install_chunk` call was exercised
+  end-to-end (via simulate, for the opcode-budget reason above) to prove the
+  state-machine transition, not the full committee.
+- **The read-budget number this design doc's §8.2 originally cited
+  (1,024 B/ref) was never independently verified before this pass** and
+  turned out to need correction to 2,048 B/ref for writes; whether reads and
+  writes share the identical 2,048 B/ref constant, or differ, was not
+  separately isolated (every read-budget failure observed in this pass's
+  experiments occurred via `box_extract`/`box_replace` mixed calls, not a
+  read-only isolation). Given both `install_chunk` and the box-opening fix
+  now correctly account for 2,048 B/ref in practice (measured, not assumed,
+  §16.2), this is recorded as a residual precision gap rather than a
+  blocking one.
