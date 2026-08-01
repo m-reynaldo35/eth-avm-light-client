@@ -1,0 +1,63 @@
+{
+  "gates": {
+    "G5_G6_M6_compiled_size": {
+      "m6_size_probe_bytes_naive_upper_bound": 3184,
+      "m6_combined_probe_bytes": 3385,
+      "m2_m5_combined_probe_bytes": 2812,
+      "m6_own_contribution_vs_m2_m5_bytes": 573,
+      "g5_target": "<= 900 bytes",
+      "g5_metric": "m6_own_contribution_vs_m2_m5_bytes (the diff-based number, per \u00a712's own 'measured M5-style, a combined probe diffed against an M2+M5 probe' methodology -- the naive single-probe number double-counts baked-in literal node bytes both probes carry and is not the gate's real metric)",
+      "g5_pass": true,
+      "real_driver_bytes": 2676,
+      "g6_target": "<= 8192 bytes (deployable per-call program cap, extra_pages=3)",
+      "g6_pass": true,
+      "note": "Mpt6ComposerApp IS the real deployable driver -- its own compiled size against the 8,192 B cap is G6-M6's actual pass/fail criterion, not a probe estimate. Mpt6SizeProbeCombinedBare vs MptSizeProbeCombinedBare is the diff-based estimate mirroring M5's own G5 methodology."
+    },
+    "phase_b_walk_alone": {
+      "consumed": 5460,
+      "ok": true,
+      "failure": "",
+      "design_doc_predicted": 5527,
+      "note": "Pure M5 walk cost, no M6 code reachable -- the phase-B half of \u00a77.3's two-walk floor."
+    },
+    "two_walk_floor": {
+      "g6_m5_account_walk": 5116,
+      "phase_b_walk": 5460,
+      "sum": 10576,
+      "note": "\u00a77.3's reference point: what the same two walks cost with NO composition overhead."
+    },
+    "mpt6_account_body_vs_control": {
+      "mpt6_account_body_consumed": 219,
+      "rlp_scan_upto_control_consumed": 127,
+      "measured_trade": 92,
+      "design_doc_estimate": 80
+    },
+    "G2_G3_M6_real_submission": {
+      "no_donors_simulated": {
+        "ok": true,
+        "total_consumed": 12202,
+        "per_txn_consumed": [
+          2244,
+          2133,
+          1682,
+          2298,
+          3845
+        ],
+        "failure": ""
+      },
+      "two_walk_floor": 10576,
+      "measured_overhead_ratio": 1.154,
+      "design_doc_predicted_ratio": 1.177,
+      "g3_m6_target_ratio": 1.25,
+      "g3_m6_pass": true,
+      "donors_sized": 14,
+      "real_submission_ok": true,
+      "real_submission_error": "",
+      "final_c_hex": "0203de97a8349a6496353877597fd35732f6705ee836b2d00b6c367fa8acd2c53329dac17f958d2ee523a2206206994597c13d831ec70be16d71963429204d70543701f859c43526c316ac005c10114f4694ca405f36261898dc12c926b33218d29afad898be487e821e8b4474465b62d802f7d33291b44fb4e949d0f78f87f79ee46428f23a2a5713ce6fc6e0beb3dda78c2ac1ea550000000000000000000000000000000000000000000000000000000000000001000000000000000000000000000000000000000000000000000000000000002a000000000000000000000000000000000000000000000000003f1ca131081cf80101",
+      "g1_m6_final_c_matches_a_m6_1_pinned_fields": true,
+      "spike_insecure_baseline": 6827,
+      "design_doc_predicted_total": 12500,
+      "note": "G2-M6: the full composite fits ONE 16-transaction atomic group, demonstrated by a real, non-simulated submission with sized donors -- M5's G7-M5 analogue and the gate that decides whether M6 is usable. G3-M6: measured composite budget <= 1.25x the two-walk floor."
+    }
+  }
+}
