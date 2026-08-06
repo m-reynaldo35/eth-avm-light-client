@@ -8,3 +8,11 @@ _build/
 _build_mpt/
 _build_composer/
 *.puya.map
+.secrets/
+**/.secrets/
+
+# Cached real beacon-API responses (e.g. full BeaconState dumps, ~150-300MB
+# each) so re-running tests/state_anchor/test_live_historical.py during
+# development doesn't re-download every time. Never real chain state a
+# reviewer needs committed -- it's just an HTTP response cache, keyed by slot.
+tests/state_anchor/.cache/
