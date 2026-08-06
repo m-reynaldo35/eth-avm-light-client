@@ -1,0 +1,37 @@
+{
+  "description": "Real test of the pk/vk-caching split (cmd/setupkeys + cmd/provewith) added to the zk-m7 spike, run on the same AWS r7i.2xlarge tier-A used for docs/design/007-receipt-log-proof.md's §14.6. Confirms the design doc's implicit assumption -- that PLONK setup is separable from per-witness proving -- actually holds in this project's own gnark/AlgoPlonk pipeline, and measures the real marginal per-proof cost for the first time (previously only the full cold-pipeline cost, ~$0.30/proof, had been measured).",
+  "one_time_setup": {
+    "N": 8567, "LogMax": 640, "MaxLogs": 48,
+    "NbConstraints": 16294913,
+    "Ptau": "powersOfTau28_hez_final_26.ptau (reused, superset of the 2^24 tier A needs -- avoided a fresh 19GB download)",
+    "CompileSec": 13.686700118,
+    "SRSLoadSec": 92.431166706,
+    "LagrangeSec": 1754.091782858,
+    "SetupSec": 44.750825226,
+    "TotalSec": 1923.374080132,
+    "PeakRSSMB": 20149,
+    "artifact_sizes": {"M7TierA.ccs": "405.8 MB", "M7TierA.pk": "1.07 GB", "M7TierA.vk": "34.4 KB", "M7TierA.py": "14.5 KB"},
+    "notes": "Ran once. These artifacts are then reused by cmd/provewith for every subsequent proof -- no compile, SRS load, Lagrange build, or Setup repeated."
+  },
+  "marginal_proofs": [
+    {
+      "tx": 1, "leaf_hash": "0x3194f5d54a71f155ca83d9672b998d5a25305b7cd62bc75790bd5ba3daf45d38",
+      "LoadKeysSec": 44.214491873, "ProveSec": 200.68836783, "TotalMarginalSec": 244.910077154,
+      "cost_usd": 0.0360,
+      "cross_check": "leaf_hash matches the value measured in the original full-pipeline tier A run exactly"
+    },
+    {
+      "tx": 2, "leaf_hash": "0x2a4630fe986cfe35efe3ac8d042acbb5701588fe9ac420133f4dc6bebac372cd",
+      "LoadKeysSec": 46.285946601, "ProveSec": 202.057004507, "TotalMarginalSec": 248.346399838,
+      "cost_usd": 0.0365,
+      "cross_check": "a different real receipt, proved from the SAME cached keys with no setup repeated -- this is the actual point of the test"
+    }
+  ],
+  "conclusion": {
+    "avg_marginal_seconds": 246.6,
+    "avg_marginal_cost_usd": 0.0363,
+    "vs_full_cold_pipeline_usd": 0.3031,
+    "ratio": "8.3x cheaper once the one-time setup is cached and reused",
+    "caveat": "Both proofs used the SAME instance that had just finished the one-time setup, so key-load read from a warm page cache -- a cold-boot spin-up-per-request architecture would add real instance-boot time (~1-2 min) on top of the 44-46s key-load measured here, not change the Prove step itself."
+  }
+}

@@ -1,0 +1,6 @@
+.secrets/
+__pycache__/
+*.pyc
+.pytest_cache/
+.env
+test_client_payment.py

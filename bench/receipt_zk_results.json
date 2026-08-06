@@ -1,0 +1,538 @@
+{
+  "_note": "M7 T3 ZK spike, revision 3 of docs/design/007-receipt-log-proof.md. Every number here is a real measurement: nbConstraints from frontend.Compile, budgets from /v2/transactions/simulate against dev-mode algod 4.7.3 at :4051, submissions confirmed in real rounds. Source: tests/fixtures/spike-reference/zk-m7/.",
+  "environment": {
+    "go": "1.25.7",
+    "gnark": "v0.15.0",
+    "gnark_crypto": "v0.20.1",
+    "algoplonk": "v0.3.1",
+    "gnark_ptau": "v0.0.0-20240119193856-bb5fe9a06e49",
+    "algod": "4.7.3 (dev mode, :4051 / kmd :4052)",
+    "machine": "16 cores, 14 GB RAM (~5-8 GB free during the pass), 3 GB swap",
+    "curve": "BN254",
+    "builder": "scs (PLONK)"
+  },
+  "ZK_B1_circuit": {
+    "status": "CLOSED",
+    "sweep_N_LogMax_MaxLogs_nbConstraints": [
+      [
+        135,
+        136,
+        4,
+        1109524
+      ],
+      [
+        271,
+        136,
+        4,
+        1340289
+      ],
+      [
+        407,
+        136,
+        4,
+        1570784
+      ],
+      [
+        543,
+        136,
+        4,
+        1802371
+      ],
+      [
+        679,
+        136,
+        4,
+        2033140
+      ],
+      [
+        815,
+        136,
+        4,
+        2263909
+      ],
+      [
+        1087,
+        136,
+        4,
+        2727635
+      ],
+      [
+        137,
+        136,
+        4,
+        1333187
+      ],
+      [
+        175,
+        136,
+        4,
+        1335201
+      ],
+      [
+        205,
+        136,
+        4,
+        1336791
+      ],
+      [
+        271,
+        135,
+        4,
+        1116600
+      ],
+      [
+        271,
+        137,
+        4,
+        1340421
+      ],
+      [
+        271,
+        175,
+        4,
+        1345437
+      ],
+      [
+        271,
+        205,
+        4,
+        1349397
+      ],
+      [
+        271,
+        271,
+        4,
+        1358109
+      ],
+      [
+        271,
+        407,
+        4,
+        1599348
+      ],
+      [
+        271,
+        543,
+        4,
+        1841679
+      ],
+      [
+        271,
+        136,
+        8,
+        1346613
+      ],
+      [
+        271,
+        136,
+        16,
+        1359261
+      ],
+      [
+        271,
+        136,
+        32,
+        1384557
+      ],
+      [
+        128,
+        136,
+        4,
+        1109167
+      ],
+      [
+        704,
+        256,
+        4,
+        2273644
+      ],
+      [
+        4224,
+        928,
+        20,
+        9530591
+      ],
+      [
+        2464,
+        320,
+        16,
+        5533836
+      ],
+      [
+        384,
+        96,
+        4,
+        1340806
+      ],
+      [
+        440,
+        160,
+        1,
+        1795131
+      ],
+      [
+        8567,
+        640,
+        48,
+        16293891
+      ],
+      [
+        7000,
+        640,
+        48,
+        13724925
+      ],
+      [
+        8000,
+        640,
+        48,
+        15348990
+      ]
+    ],
+    "commitments": 1,
+    "commitments_note": "every compile at every size on both curves reports exactly 1 BSB22 commitment, confirming design doc 4.2's forcing fact on the real M7 circuit",
+    "fitted_formula": {
+      "expr": "406296 + 222312*(blocks(N)+blocks(LOGMAX)) + 69.4*N + 138.7*LOGMAX + 1591.7*MAXLOGS",
+      "blocks": "x // 136 + 1",
+      "max_abs_residual": 10530,
+      "max_rel_residual_pct": 0.065,
+      "fit_points": 29
+    },
+    "isolated_marginals": {
+      "per_leaf_byte": 53.0,
+      "per_log_byte": 132.0,
+      "per_maxlogs_slot": 1581,
+      "per_keccak_block": 223400
+    },
+    "curve_equality": {
+      "BN254": 1340289,
+      "BLS12_381": 1340293,
+      "config": "N=271 LogMax=136 MaxLogs=4",
+      "note": "differ by 4 constraints; design doc rev.2 said 'identical' -- not measured, not true"
+    },
+    "tier_A_rev2_claim_verified": {
+      "N": 8567,
+      "LOGMAX": 640,
+      "MAXLOGS": 48,
+      "nbConstraints": 16293891,
+      "domain": "2^24",
+      "fits": true,
+      "rev2_projection": "~16.5M",
+      "error_pct": -1.9
+    },
+    "tier_B_rev2_claim": {
+      "N": 18223,
+      "result": "OOM-killed at 9,064,788 kB RSS; NOT compiled"
+    }
+  },
+  "ZK_B2_trusted_setup": {
+    "status": "CLOSED",
+    "how": "bypass algoplonk setup.Run (go:embed, closed to consumers); build kzg.SRS from a real .ptau with github.com/mdehoog/gnark-ptau, call plonk.Setup directly, hand Pk/Vk to algoplonk.CompiledCircuit + WritePuyaPyVerifier (all unmodified AlgoPlonk code)",
+    "ceremony_host": "https://storage.googleapis.com/zkevm/ptau/powersOfTau28_hez_final_<NN>.ptau",
+    "files": {
+      "_18": 302072984,
+      "_21": 2416002200,
+      "_22": 4831921304,
+      "_23": 9663759512,
+      "_24": 19327435928,
+      "_25": 38654788760
+    },
+    "ptau_18_sha256": "e970efa7774da80101e0ac336d083ef3339855c98112539338d706b2b89ac694",
+    "download_rate_measured_Bps": 8147867
+  },
+  "ZK_B7_setup_audit": {
+    "status": "HALF CLOSED",
+    "pk_bin_reproduced_byte_for_byte": true,
+    "pk_bin_bytes": 16777188,
+    "pk_bin_sha256": "470491b2205f3459d9aae9062585f8138c0297c2bbd51fe42ad145d297cd86e5",
+    "vk_bin_match": "first 160 bytes identical; ours 33952 B vs vendored 160 B",
+    "vk_bin_reason": "gnark-crypto v0.20.1 kzg.VerifyingKey.WriteTo now appends 66*4 precomputed pairing lines; AlgoPlonk's trustedSetupBN254 discards Vk.ReadFrom's error so the short vendored file still loads correctly",
+    "all_four_vendored_setups_prove_and_verify": true,
+    "vendored_capacity_correction": {
+      "PerpetualPowersOfTauBN254": {
+        "g1_points": 524287,
+        "max_domain": "2^18",
+        "design_doc_rev2_said": "2^17",
+        "algoplonk_doc_says": "2^17 (conservative)"
+      },
+      "DuskBLS12381": {
+        "pk_bin_bytes": 100663348,
+        "max_domain": "2^21"
+      },
+      "EthereumKzgCeremonyBLS12381": {
+        "pk_bin_bytes": 1572868,
+        "g1_points": 32768,
+        "max_domain": "2^14"
+      }
+    }
+  },
+  "ZK_B3_B5_B6_end_to_end": {
+    "status": "CLOSED",
+    "runs": [
+      {
+        "tx": 85,
+        "receipt_type": "EIP-2718 type 2 (EIP-1559)",
+        "leaf_bytes": 370,
+        "n_logs": 1,
+        "log_bytes": 92,
+        "leaf_hash": "0x2ef46a027b5fa03ca7879708682578584b47a252b55a6be3253b2e85bad2f06d",
+        "N": 384,
+        "LogMax": 96,
+        "MaxLogs": 4,
+        "nbConstraints": 1340806,
+        "commitments": 1,
+        "domain": "2^21",
+        "ptau": "powersOfTau28_hez_final_21.ptau",
+        "srs_g1_points": 4194303,
+        "compile_s": 1.5,
+        "to_srs_s": 8.6,
+        "to_lagrange_g1_s": 197.8,
+        "plonk_setup_s": 6.3,
+        "prove_and_verify_s": 41.2,
+        "peak_rss_kb": 4021264,
+        "total_wall_s": 257,
+        "proof_bytes": 864,
+        "public_input_bytes": 224,
+        "logicsig_program_bytes": 3924,
+        "total_app_args_bytes": 1190,
+        "logicsig_budget_consumed": 185370,
+        "app_budget_consumed": 2,
+        "real_submission_round": 557,
+        "real_submission_appid": 1757,
+        "tampered_public_input": "rejected by logic"
+      },
+      {
+        "tx": 8,
+        "receipt_type": "legacy type 0",
+        "leaf_bytes": 433,
+        "n_logs": 1,
+        "log_bytes": 157,
+        "leaf_hash": "0xf9486109b582c21860f5ac0675b156d389c99aa66329f702a8af46b054163e44",
+        "N": 440,
+        "LogMax": 160,
+        "MaxLogs": 1,
+        "nbConstraints": 1795131,
+        "commitments": 1,
+        "domain": "2^21",
+        "ptau": "powersOfTau28_hez_final_21.ptau",
+        "srs_g1_points": 4194303,
+        "compile_s": 1.9,
+        "to_srs_s": 7.3,
+        "to_lagrange_g1_s": 211.0,
+        "plonk_setup_s": 7.9,
+        "prove_and_verify_s": 41.7,
+        "proof_bytes": 864,
+        "public_input_bytes": 224,
+        "logicsig_program_bytes": 3924,
+        "total_app_args_bytes": 1255,
+        "logicsig_budget_consumed": 185454,
+        "app_budget_consumed": 2,
+        "real_submission_round": 560,
+        "real_submission_appid": 1790,
+        "tampered_public_input": "rejected by logic"
+      },
+      {
+        "tx": 31,
+        "note": "the pinned fixture receipt",
+        "leaf_bytes": 690,
+        "N": 704,
+        "LogMax": 256,
+        "MaxLogs": 4,
+        "nbConstraints": 2273644,
+        "domain": "2^22",
+        "to_srs_s": 14.8,
+        "to_lagrange_g1_s": 452.9,
+        "plonk_setup_s": 13.2,
+        "verifier_codegen": "ok",
+        "prove": "OOM-KILLED on this 14 GB box"
+      }
+    ],
+    "bn254_vs_bls12381_verifier": {
+      "BN254_logicsig_budget": 185370,
+      "BN254_public_inputs": 7,
+      "BLS12_381_logicsig_budget": 221201,
+      "BLS12_381_public_inputs": 2,
+      "BN254_proof_bytes": 864,
+      "BLS12_381_proof_bytes": 1184,
+      "BN254_program_bytes": 3924,
+      "BLS12_381_program_bytes": 4819
+    },
+    "verifier_cost_is_slightly_data_dependent": {
+      "observed_spread": 84,
+      "pct": 0.045
+    }
+  },
+  "ZK_B9_coverage": {
+    "status": "NEW BLOCKER -- a tier is (N, LOGMAX), not a leaf bound alone",
+    "block": 25639768,
+    "n_receipts": 137,
+    "coverage_by_largest_deployed_tier": {
+      "2^21": [
+        79,
+        57.7
+      ],
+      "2^22": [
+        114,
+        83.2
+      ],
+      "2^23": [
+        127,
+        92.7
+      ],
+      "2^24": [
+        134,
+        97.8
+      ],
+      "2^25": [
+        135,
+        98.5
+      ],
+      "2^26": [
+        136,
+        99.3
+      ],
+      "2^27": [
+        136,
+        99.3
+      ]
+    },
+    "rev2_claimed": "7 of 9 oversized at 2^24; 99.3% at 2^25",
+    "rev3_measured": "6 of 9 oversized at 2^24 (97.8% overall); 99.3% needs 2^26",
+    "oversized_receipts": [
+      {
+        "tx": 35,
+        "leaf": 4221,
+        "largest_log": 925,
+        "n_logs": 18,
+        "constraints": 9526406,
+        "domain": "2^24"
+      },
+      {
+        "tx": 2,
+        "leaf": 5211,
+        "largest_log": 416,
+        "n_logs": 27,
+        "constraints": 10428109,
+        "domain": "2^24"
+      },
+      {
+        "tx": 18,
+        "leaf": 5498,
+        "largest_log": 925,
+        "n_logs": 20,
+        "constraints": 11619042,
+        "domain": "2^24"
+      },
+      {
+        "tx": 80,
+        "leaf": 5785,
+        "largest_log": 449,
+        "n_logs": 22,
+        "constraints": 11353820,
+        "domain": "2^24"
+      },
+      {
+        "tx": 1,
+        "leaf": 5868,
+        "largest_log": 287,
+        "n_logs": 32,
+        "constraints": 11353031,
+        "domain": "2^24"
+      },
+      {
+        "tx": 73,
+        "leaf": 7546,
+        "largest_log": 2368,
+        "n_logs": 21,
+        "constraints": 17743036,
+        "domain": "2^25"
+      },
+      {
+        "tx": 76,
+        "leaf": 8539,
+        "largest_log": 319,
+        "n_logs": 43,
+        "constraints": 15784316,
+        "domain": "2^24"
+      },
+      {
+        "tx": 6,
+        "leaf": 15463,
+        "largest_log": 8061,
+        "n_logs": 34,
+        "constraints": 41334045,
+        "domain": "2^26"
+      },
+      {
+        "tx": 119,
+        "leaf": 157283,
+        "largest_log": 157,
+        "n_logs": 1000,
+        "constraints": 270597348,
+        "domain": "2^29"
+      }
+    ],
+    "note": "tx 73's leaf is SMALLER than tx 76's yet needs a LARGER tier, purely because one of its logs is 2,368 B. rev2's projection held LOGMAX fixed at 640 B and could not see this."
+  },
+  "circuit_soundness_tests": {
+    "method": "gnark test.IsSolved -- every constraint evaluated on a concrete witness",
+    "ZK_1_real_corpus": {
+      "satisfied": 97,
+      "failed": 0,
+      "skipped": 40,
+      "skip_reason": "32 receipts have no logs; 8 exceed the 4,300 B cap of this run",
+      "includes": [
+        "tx 7 (2453 B, the design doc 2.4 leaf)",
+        "tx 35 (4221 B, smallest oversized)"
+      ],
+      "oracle_caveat": "the oracle is the spike's own Go RLP walk (assign.go), not M2's Python decoder -- the differential against contracts/primitives/rlp/ is still owed"
+    },
+    "negatives_all_rejected": [
+      "wrong leaf_hash (hi half)",
+      "wrong log commitment",
+      "wrong log_index",
+      "wrong path_tail",
+      "wrong hdr (n_logs)",
+      "truncated leaf_len",
+      "one flipped leaf byte",
+      "ZK-6 SPAN CONTAINMENT: target log bytes taken from inside the 256-byte bloom filter with a matching commitment"
+    ],
+    "not_run": [
+      "ZK-8 non-canonical long-form RLP negative witness (constraints exist in rlp.go header(), no witness built)"
+    ]
+  },
+  "section_13_assessment_in_circuit_costs": {
+    "_note": "real frontend.Compile on BN254/scs, for the Part-4 'should other modules use ZK?' assessment",
+    "keccak256_136B_2blocks": 840108,
+    "keccak256_544B_5blocks": 1512915,
+    "keccak256_per_136B_block": 224269,
+    "keccak256_per_block_note": "independently reproduces design doc 4.5's coefficient exactly",
+    "sha256_64B": 560609,
+    "sha256_512B": 1158437,
+    "sha256_per_compression": 85404,
+    "bls12381_pairing_check_2": 1600189,
+    "bls12381_g1_add_1": 6232,
+    "bls12381_g1_add_7": 35050,
+    "bls12381_g1_add_31": 134049,
+    "bls12381_g1_add_marginal": 4324,
+    "bls12381_assert_is_on_g1_2": 548862,
+    "bls12381_assert_is_on_g1_8": 1812124,
+    "bls12381_assert_is_on_g1_32": 6658588,
+    "bls12381_subgroup_check_marginal": 208000,
+    "bls12381_map_to_g2": 614565,
+    "all_report_commitments": 1,
+    "on_chain_comparison": {
+      "keccak256_opcode": 130,
+      "sha256_opcode": 35,
+      "M4_verify_aggregate_signature": 55474,
+      "M4_hash_to_g2": 17443,
+      "M4_ec_add_per_point": 217,
+      "M1_g2_subgroup_check": 2373,
+      "M4_worst_case_update": 157509,
+      "M4_install_total": 1357000,
+      "M5_8node_account_walk": 5116,
+      "M6_full_composite": 12202
+    },
+    "recommendation": "NO pivot. Confine ZK to M7's T3 tier. See design doc 13.6."
+  }
+}

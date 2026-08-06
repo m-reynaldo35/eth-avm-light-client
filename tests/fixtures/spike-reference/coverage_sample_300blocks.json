@@ -1,0 +1,30 @@
+{
+  "blocks_requested": 300,
+  "blocks_succeeded": 300,
+  "blocks_failed": 0,
+  "total_receipts": 94667,
+  "counts": {
+    "T1": 88730,
+    "T2": 3574,
+    "tierA": 1083,
+    "tierB": 406,
+    "tierC": 599,
+    "unprovable": 275
+  },
+  "pct": {
+    "T1": 93.729,
+    "T2": 3.775,
+    "tierA": 1.144,
+    "tierB": 0.429,
+    "tierC": 0.633,
+    "unprovable": 0.29
+  },
+  "leaf_size_p50": 279,
+  "leaf_size_p90": 1247,
+  "leaf_size_p99": 7423,
+  "leaf_size_max": 132229,
+  "block_range": [
+    25589679,
+    25689984
+  ]
+}
