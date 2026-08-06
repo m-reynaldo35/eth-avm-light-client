@@ -1,0 +1,24 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "eth-avm-relayer"
+version = "0.1.0"
+description = "M9: off-chain relayer/client for the ETH-AVM light client project (docs/design/009-relayer-client.md)."
+requires-python = ">=3.10"
+dependencies = [
+    "py-algorand-sdk",
+    "rlp",
+    "pycryptodome",
+    "py_ecc",
+]
+
+# Only `relayer` is a distributable package today (docs/design/009-relayer-client.md
+# §17) -- `contracts`, `tests`, `bench`, `deploy`, `service` are this repo's own
+# development tree, not published artifacts. M12 ("Docs & packaging / release
+# prep") owns the full release story; this is the minimum needed for
+# `service/x402_endpoint/requirements.txt`'s `-e ../..` editable install to
+# resolve `import relayer` at all.
+[tool.setuptools]
+packages = ["relayer", "relayer.sources", "relayer.codec", "relayer.ssz", "relayer.proofs", "relayer.group", "relayer.drivers"]

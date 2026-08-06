@@ -1,30 +1,21 @@
 """Real SSZ merkleization of `ExecutionPayload` (Deneb/Electra/Fulu shape,
-17 fields -> 32 leaves, depth 5), built from REAL field values fetched from
-a live beacon API's `/eth/v2/beacon/blocks/{slot}` response. This is the
-piece `service/x402_endpoint/eth_beacon_rpc.py` deliberately does NOT do
-(its own docstring: "this module never touches `execution` at all -- that's
-M8's field") -- so it is implemented here, once, for real live data.
+17 fields -> 32 leaves, depth 5), promoted verbatim from `tests/state_anchor/
+real_ssz.py` (008's G1-M8 live proof). Built from real field values fetched
+from a live beacon API's `/eth/v2/beacon/blocks/{slot}` response's own
+`execution` field (the light-client-header shape, which already gives
+`transactions_root`/`withdrawals_root` as precomputed roots -- see
+`relayer.ssz.block_body` for the full-payload variant HISTORICAL mode's
+arbitrary-slot fixture builder needs when no such precomputed header is
+available).
 
-Method (§3.1 Candidate B, this project's own derivation discipline: derive,
-don't copy): build the FULL 32-leaf `ExecutionPayload` tree from real field
-values, which gives both (a) the container's own root, independently
-cross-checked against the real, live `execution_branch` (depth 4, gindex 25)
-by folding up to the real `body_root` the beacon API already published, and
-(b) the depth-5 sibling path from any one field to that root, which -- once
-concatenated with the same real `execution_branch` -- IS the depth-9 composed
-branch `bridge.fold_execution_fields` needs. No gindex is hand-copied: field
-positions are the real SSZ field ORDER (fixed by the consensus spec's
-container definition, cross-checked below against the two published
-anchors: `block_hash` at composed gindex 812 for Deneb+, exactly as
-docs/design/008-trusted-root-anchor.md §3.2 independently verifies).
+No gindex is hand-copied: field positions are the real SSZ field ORDER
+(fixed by the consensus spec's container definition), cross-checked
+against the two published anchors: `block_hash` at composed gindex 812 for
+Deneb+ (docs/design/008-trusted-root-anchor.md §3.2).
 """
 from __future__ import annotations
 
-import hashlib
-
-
-def sha256(b: bytes) -> bytes:
-    return hashlib.sha256(b).digest()
+from relayer.ssz.merkleize import extra_data_root, logs_bloom_root, sha256
 
 
 def le_bytes(x: int, n: int) -> bytes:
@@ -52,27 +43,6 @@ def build_tree(depth: int, leaves: list[bytes]):
         return b
 
     return root, branch_for
-
-
-def mix_in_length(root: bytes, length: int) -> bytes:
-    return sha256(root + le_bytes(length, 32))
-
-
-def extra_data_root(extra_data: bytes) -> bytes:
-    """`List[byte, MAX_EXTRA_DATA_BYTES=32]`: pack, merkleize with the
-    32-byte (1-chunk) limit, mix in length."""
-    assert len(extra_data) <= 32
-    chunk = extra_data + b"\x00" * (32 - len(extra_data))
-    # limit = ceil(32/32) = 1 chunk -> depth 0 -> the "root" is the chunk itself
-    return mix_in_length(chunk, len(extra_data))
-
-
-def logs_bloom_root(logs_bloom: bytes) -> bytes:
-    """`Vector[byte, 256]` -> 8 chunks, depth 3, no length mix-in (fixed vector)."""
-    assert len(logs_bloom) == 256
-    chunks = [logs_bloom[i : i + 32] for i in range(0, 256, 32)]
-    root, _branch = build_tree(3, chunks)
-    return root
 
 
 # Real field order, Deneb/Electra/Fulu ExecutionPayload (17 fields, 0-indexed):
@@ -117,7 +87,7 @@ def compute_branch_root(leaf: bytes, branch: bytes, gindex: int) -> bytes:
     assert len(branch) == depth * 32
     node = leaf
     for i in range(depth):
-        sib = branch[32 * i : 32 * i + 32]
+        sib = branch[32 * i: 32 * i + 32]
         if (gindex >> i) & 1:
             node = sha256(sib + node)
         else:
@@ -127,11 +97,11 @@ def compute_branch_root(leaf: bytes, branch: bytes, gindex: int) -> bytes:
 
 def deep_branch(payload: dict, execution_branch_hex: list[str], field: str) -> tuple[bytes, int]:
     """Returns `(composed_branch_bytes, composed_gindex)` for `field`
-    (one of "state_root"/"receipts_root"/"block_number") -- the REAL depth-9
-    branch M8's `anchor_direct`/`anchor_historical` need, built entirely
-    from real data: the inner depth-5 siblings from this module's own real
-    tree, concatenated with the real depth-4 `execution_branch` the beacon
-    API already published."""
+    (one of "state_root"/"receipts_root"/"block_number") -- the real
+    depth-9 branch M8's `anchor_direct`/`anchor_historical` need, built
+    entirely from real data: the inner depth-5 siblings from this module's
+    own real tree, concatenated with the real depth-4 `execution_branch`
+    the beacon API already published."""
     _root, branch_for = build_execution_payload_tree(payload)
     field_index = FIELD_INDEX[field]
     inner_branch = branch_for(field_index)  # depth 5, leaf-to-root order

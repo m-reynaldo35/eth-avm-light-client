@@ -110,11 +110,12 @@ import pytest
 REPO_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO_ROOT))
 
-from service.x402_endpoint import eth_beacon_rpc as beacon  # noqa: E402
-from service.x402_endpoint import eth_rpc  # noqa: E402
-from service.x402_endpoint.trie_proof import build_receipts_trie_and_path, kec  # noqa: E402
-from tests.state_anchor import real_beacon_state as rbs  # noqa: E402
-from tests.state_anchor import real_ssz  # noqa: E402
+from relayer.sources import beacon  # noqa: E402
+from relayer.sources import eth_rpc  # noqa: E402
+from relayer.proofs.receipts_trie import build_receipts_trie_and_path, kec  # noqa: E402
+from relayer.ssz import beacon_state as rbs_state  # noqa: E402
+from relayer.ssz import block_body as rbs_body  # noqa: E402
+from relayer.ssz import execution_payload as real_ssz  # noqa: E402
 from tests.state_anchor.conftest import (  # noqa: E402
     Arc4Harness,
     algod_client,
@@ -408,14 +409,14 @@ def historical_fixture(beacon_available, live_data):
         "(guards against the numeric-slot-vs-'finalized'-keyword race the task brief names)"
     )
 
-    state_root, field_roots, block_roots_raw = rbs.build_beacon_state_tree(data, verbose=False)
+    state_root, field_roots, block_roots_raw = rbs_state.build_beacon_state_tree(data, verbose=False)
     assert state_root == live_fin_state_root, (
         "real, independently-computed Fulu BeaconState root must equal the real "
         "finalized header's own state_root -- if this fails, there is a real bug "
         "in real_beacon_state.py's field packing/order, not a data problem"
     )
 
-    branch19 = rbs.block_roots_fold_branch(field_roots, block_roots_raw, t_slot)
+    branch19 = rbs_state.block_roots_fold_branch(field_roots, block_roots_raw, t_slot)
 
     hresp = beacon._get_json(f"/eth/v1/beacon/headers/{t_slot}")
     hm = hresp["data"]["header"]["message"]
@@ -434,8 +435,8 @@ def historical_fixture(beacon_available, live_data):
     tblk = beacon._get_json(f"/eth/v2/beacon/blocks/{t_slot}")
     tbody = tblk["data"]["message"]["body"]
     tpayload = tbody["execution_payload"]
-    payload_root, branch_for = rbs.build_full_execution_payload_tree(tpayload)
-    body_root, branch4 = rbs.build_beacon_block_body_tree(tbody, payload_root)
+    payload_root, branch_for = rbs_body.build_full_execution_payload_tree(tpayload)
+    body_root, branch4 = rbs_body.build_beacon_block_body_tree(tbody, payload_root)
     assert body_root == t_header_bytes[80:112], "real BeaconBlockBody htr must equal T_SLOT header's own body_root slice"
 
     el_state_root = bytes.fromhex(tpayload["state_root"][2:])
@@ -458,7 +459,7 @@ def historical_fixture(beacon_available, live_data):
         "fin_header": fu_args.finalized_header, "fin_root": fin_root, "fin_state_root": state_root,
         "target_header": t_header_bytes, "t_root": t_root,
         "block_roots_branch": branch19,
-        "g_block_roots_base_fulu": rbs.G_BLOCK_ROOTS_BASE_FULU,
+        "g_block_roots_base_fulu": rbs_state.G_BLOCK_ROOTS_BASE_FULU,
         "el_state_root": el_state_root, "el_receipts_root": el_receipts_root, "el_block_number": el_block_number,
         "state_branch": state_branch, "receipts_branch": receipts_branch, "number_branch": number_branch,
     }

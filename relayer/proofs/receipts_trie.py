@@ -1,13 +1,12 @@
-"""Real receipts-trie reconstruction for an arbitrary block/tx_index --
-generalizes tests/fixtures/spike-reference/zk-m7/build_trie.py's algorithm
-(and the ad-hoc path-collecting variant used to prove M7's T2 path live
-against tx 7) into a reusable function.
+"""Real receipts-trie reconstruction for an arbitrary block/tx_index.
+Promoted verbatim (design doc §2.1/§17: "Promote verbatim") from
+`service/x402_endpoint/trie_proof.py` -- live-proven against M7's real
+mainnet app `3664247481`.
 
-There is no `eth_getProof`-equivalent for the receipts trie on real Ethereum
-JSON-RPC (eth_getProof only covers the STATE/storage tries) -- this is
-exactly the gap M7 as a whole exists to work around, and why a real service
-built on M7 has to do this reconstruction itself, the same way M9
-("off-chain relayer/client", not yet designed) eventually will.
+There is no `eth_getProof`-equivalent for the receipts trie on real
+Ethereum JSON-RPC (`eth_getProof` only covers the state/storage tries) --
+this is exactly the gap M7 as a whole exists to work around, and why a real
+relayer has to reconstruct it itself.
 """
 import rlp
 from Crypto.Hash import keccak
@@ -64,11 +63,9 @@ def build_receipts_trie_and_path(receipts: list[dict], target_tx_index: int
     """Rebuild the real receipts trie from a block's real `eth_getBlockReceipts`
     result, and return `(receipts_root, nodes)` where `nodes` is the real
     root-to-leaf node path for `target_tx_index` (RLP-encoded bytes, in the
-    order `mpt_walk_node` expects: root first, leaf last).
-    """
+    order `mpt_walk_node` expects: root first, leaf last)."""
     items: dict[tuple, bytes] = {}
     for i, r in enumerate(receipts):
-        # eth_getBlockReceipts entries carry their own transactionIndex
         idx = _qi(r.get("transactionIndex", i))
         items[tuple(_nib(rlp.encode(idx)))] = _encode_receipt(r)
 
@@ -76,7 +73,7 @@ def build_receipts_trie_and_path(receipts: list[dict], target_tx_index: int
     if target_key not in items:
         raise KeyError(f"tx_index {target_tx_index} not found in this block's receipts")
 
-    path_nodes_reverse: list[bytes] = []  # collected leaf-first, reversed at the end
+    path_nodes_reverse: list[bytes] = []
 
     def ref(node):
         enc = rlp.encode(node)

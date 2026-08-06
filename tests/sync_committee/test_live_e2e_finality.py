@@ -125,7 +125,8 @@ from algosdk.atomic_transaction_composer import (
     TransactionWithSigner,
 )
 
-from service.x402_endpoint import eth_beacon_rpc as beacon
+from relayer.drivers import m4_sync_committee as m4sc
+from relayer.sources import beacon
 from tests.sync_committee import reference as ref
 from tests.sync_committee.conftest import ALGOD_ADDRESS, TOKEN, SyncCommitteeLiveHarness
 
@@ -265,13 +266,13 @@ def _fetch_live_checkpoint_and_update(max_attempts: int = 3):
     for _ in range(max_attempts):
         try:
             fu_now = beacon.fetch_finality_update()
-            fu_now_args = beacon.transform_finality_update(fu_now)
+            fu_now_args = m4sc.transform_finality_update(fu_now)
             fu_now_finalized_slot = int.from_bytes(fu_now_args.finalized_header[0:8], "little")
             fu_now_attested_slot = int.from_bytes(fu_now_args.attested_header[0:8], "little")
             period = fu_now_attested_slot // 8192
 
             checkpoint_update = beacon.fetch_updates(period, 1)[0]
-            checkpoint_args = beacon.transform_light_client_update(checkpoint_update)
+            checkpoint_args = m4sc.transform_light_client_update(checkpoint_update)
             checkpoint_finalized_slot = int.from_bytes(checkpoint_args.finalized_header[0:8], "little")
 
             if checkpoint_finalized_slot >= fu_now_finalized_slot:
@@ -284,7 +285,7 @@ def _fetch_live_checkpoint_and_update(max_attempts: int = 3):
 
             checkpoint_root = ref.hash_tree_root_beacon_block_header(checkpoint_args.finalized_header)
             boot_resp = beacon.fetch_bootstrap(checkpoint_root.hex())
-            boot_args = beacon.transform_bootstrap(boot_resp)
+            boot_args = m4sc.transform_bootstrap(boot_resp)
             assert ref.hash_tree_root_beacon_block_header(boot_args.header) == checkpoint_root
             assert len(boot_args.pubkey_pairs) == 512
 
@@ -571,7 +572,7 @@ def test_corrupted_signature_is_rejected_live(installed_committee, beacon_availa
     fin_slot_before = gstate_before[b"fin_slot"]["uint"]
 
     fu_next = beacon.fetch_finality_update()
-    fu_next_args = beacon.transform_finality_update(fu_next)
+    fu_next_args = m4sc.transform_finality_update(fu_next)
 
     sig = bytearray(fu_next_args.signature)
     sig[100] ^= 0xFF  # flip a byte inside the G2 point encoding
@@ -600,7 +601,7 @@ def test_corrupted_merkle_branch_is_rejected_live(installed_committee, beacon_av
     callee_id = installed_committee["callee_id"]
 
     fu_next = beacon.fetch_finality_update()
-    fu_next_args = beacon.transform_finality_update(fu_next)
+    fu_next_args = m4sc.transform_finality_update(fu_next)
 
     branch = bytearray(fu_next_args.finality_branch)
     branch[10] ^= 0xFF

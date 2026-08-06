@@ -358,7 +358,7 @@ class TestF6DenebElectraTwoRowTrap:
 def beacon_available() -> bool:
     import urllib.request
 
-    from service.x402_endpoint import eth_beacon_rpc as beacon
+    from relayer.sources import beacon
 
     for base in beacon.BEACON_APIS:
         try:
@@ -385,7 +385,7 @@ class TestElectraEpochLiveCrossCheck:
             pytest.skip("no reachable beacon-API endpoint in the pool")
         import urllib.request
 
-        from service.x402_endpoint import eth_beacon_rpc as beacon
+        from relayer.sources import beacon
 
         last = None
         for base in beacon.BEACON_APIS:

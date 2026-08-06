@@ -29,10 +29,10 @@ import pytest
 REPO_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO_ROOT))
 
-from service.x402_endpoint import eth_beacon_rpc as beacon  # noqa: E402
-from service.x402_endpoint import eth_rpc  # noqa: E402
-from service.x402_endpoint.trie_proof import build_receipts_trie_and_path  # noqa: E402
-from tests.state_anchor import real_ssz  # noqa: E402
+from relayer.sources import beacon  # noqa: E402
+from relayer.sources import eth_rpc  # noqa: E402
+from relayer.proofs.receipts_trie import build_receipts_trie_and_path  # noqa: E402
+from relayer.ssz import execution_payload as real_ssz  # noqa: E402
 from tests.state_anchor.conftest import (  # noqa: E402
     Arc4Harness,
     algod_client,

@@ -1,6 +1,14 @@
+# M9 (docs/design/009-relayer-client.md §2.3): this service now imports
+# `relayer` as a library instead of hand-rolling its own RPC/trie/group
+# logic -- the four .py modules that used to live in this directory moved
+# to relayer/. `-e ../..` installs the repo root in editable mode so
+# `import relayer` resolves; a packaged release would pin a real version
+# instead.
+-e ../..
 fastapi
 uvicorn[standard]
 x402-avm[fastapi,avm]
 py-algorand-sdk
 rlp
 pycryptodome
+py_ecc

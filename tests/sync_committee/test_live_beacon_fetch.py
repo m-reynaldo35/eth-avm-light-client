@@ -20,7 +20,8 @@ import urllib.request
 
 import pytest
 
-from service.x402_endpoint import eth_beacon_rpc as beacon
+from relayer.drivers import m4_sync_committee as m4sc
+from relayer.sources import beacon
 
 # Genesis timestamp for Ethereum mainnet (2020-12-01T12:00:23Z), used only to
 # sanity-check that a fetched slot's implied wall-clock time is plausible --
@@ -56,7 +57,7 @@ def test_live_finality_update_decodes_sanely(beacon_available):
     resp = beacon.fetch_finality_update()
     assert resp["version"], "missing fork version"
 
-    args = beacon.transform_finality_update(resp)
+    args = m4sc.transform_finality_update(resp)
 
     # -- byte-length shape checks (the exact shapes submit_update expects) --
     assert len(args.attested_header) == 112
@@ -116,7 +117,7 @@ def test_live_optimistic_update_has_no_finality_fields(beacon_available):
     resp = beacon.fetch_optimistic_update()
     assert set(resp["data"].keys()) == {"attested_header", "sync_aggregate", "signature_slot"}
 
-    decoded = beacon.transform_optimistic_update(resp)
+    decoded = m4sc.transform_optimistic_update(resp)
     assert len(decoded["attested_header"]) == 112
     assert len(decoded["signature"]) == 192
     assert decoded["signature_slot"] > 0
@@ -135,11 +136,11 @@ def test_live_bootstrap_round_trips_against_a_real_checkpoint(beacon_available):
     from tests.sync_committee import reference as ref
 
     resp = beacon.fetch_finality_update()
-    args = beacon.transform_finality_update(resp)
+    args = m4sc.transform_finality_update(resp)
     trusted_block_root = ref.hash_tree_root_beacon_block_header(args.finalized_header)
 
     boot_resp = beacon.fetch_bootstrap(trusted_block_root.hex())
-    boot_args = beacon.transform_bootstrap(boot_resp)
+    boot_args = m4sc.transform_bootstrap(boot_resp)
 
     # The bootstrap's own header must hash back to the exact root we asked
     # for -- an independent oracle (the beacon node's own state) confirming
@@ -154,10 +155,23 @@ def test_live_bootstrap_round_trips_against_a_real_checkpoint(beacon_available):
     assert len(boot_args.aggregate_compressed) == 48
     assert len(boot_args.aggregate_uncompressed) == 96
 
-    chunks = beacon.install_chunks(boot_args.pubkey_pairs, chunk_size=64)
-    assert len(chunks) == 8  # 512 / 64, matches BOXES_PER_COMMITTEE
+    # M9's D1 fix (docs/design/009-relayer-client.md §2.4, §18 item 13):
+    # the OLD `chunk_size=64` default ("to match KEYS_PER_BOX") produced a
+    # 3,072 B compressed + 6,144 B uncompressed blob -- far past the
+    # 2,048 B total app-argument cap -- making it "the one packaged
+    # chunking helper this project has that nobody can use". The fixed
+    # API now REJECTS that chunk size itself (R-6, §13.2), rather than
+    # letting it fail against algod, and the real usable chunk size is 8
+    # (matching 64 real `install_chunk` submissions in
+    # `test_live_e2e_finality.py`).
+    with pytest.raises(ValueError):
+        m4sc.install_chunks(boot_args.pubkey_pairs, chunk_size=64)
+
+    chunks = m4sc.install_chunks(boot_args.pubkey_pairs, chunk_size=8)
+    assert len(chunks) == 64  # 512 / 8
     assert chunks[0][0] == 0
-    assert chunks[-1][0] == 448
+    assert chunks[-1][0] == 504
     for _index, compressed_blob, uncompressed_blob in chunks:
-        assert len(compressed_blob) == 64 * 48
-        assert len(uncompressed_blob) == 64 * 96
+        assert len(compressed_blob) == 8 * 48
+        assert len(uncompressed_blob) == 8 * 96
+        assert len(compressed_blob) + len(uncompressed_blob) <= 2048
