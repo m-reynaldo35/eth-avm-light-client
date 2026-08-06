@@ -123,11 +123,39 @@ def merkleize_stack_finalize(state: Bytes, filled: UInt64, depth: UInt64) -> Byt
     or `zero_hash(0)` if none was. The general loop below runs zero
     iterations at depth 0 and would otherwise always return `zero_hash(0)`
     regardless of `filled`, silently discarding a real pushed chunk.
+
+    **A second, previously-undiscovered edge case, symmetric with the
+    depth-0 one above**: when EXACTLY `2**depth` chunks have been pushed
+    (a fully-packed Vector, `filled == 1 << depth`), `merkleize_stack_push`'s
+    carry chain runs all the way through levels `0..depth-1` and deposits
+    the finished, correct root in stack slot `depth` itself -- the "extra"
+    slot `SESSION_STACK_SLOTS = COMMITTEE_MERKLE_DEPTH + 1` (and this
+    function's own docstring's `depth+1` sizing requirement) exists
+    specifically to hold. The loop below only ever reads slots `0..depth-1`
+    (`for level in urange(depth)`), so without this check it silently
+    ignores that slot and folds a chain of bare `zero_hash` values instead
+    -- returning `zero_hash(depth)` regardless of what was actually pushed.
+    This is invisible for any `n < 2**depth` (`tests/ssz/test_merkleize.py`'s
+    own `NON_POWER_OF_TWO_NS` deliberately stops at 511, one below the
+    depth-9 boundary, and every real M3 exercise of this function uses a
+    partially-filled List) and was found live, 2026-08-06, the first time
+    this function was ever exercised against a real, exactly-512-member
+    `SyncCommittee.pubkeys: Vector[BLSPubkey, 512]` install
+    (`contracts/sync_committee/install.py`'s `install_process_finalize`,
+    `COMMITTEE_MERKLE_DEPTH = 9`, `SYNC_COMMITTEE_SIZE = 512 == 2**9`
+    exactly, always, for every real mainnet committee) -- a shape no
+    existing test vector or vendored fixture ever produced, since M4's own
+    live tests before this pass only exercised `install_chunk` in
+    isolation, never a real, complete 512-member `install_finalize`.
     """
     if depth == 0:
         if op.getbit(filled, UInt64(0)):
             return state[0:32]
         return zero_hash(UInt64(0))
+
+    if op.getbit(filled, depth):
+        offset = depth * 32
+        return state[offset : offset + 32]
 
     node = zero_hash(UInt64(0))
     for level in urange(depth):
