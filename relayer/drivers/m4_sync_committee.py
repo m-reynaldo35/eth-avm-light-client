@@ -48,6 +48,7 @@ _SIGNATURES = {
         "submit_update(byte[112],byte[112],byte[],byte[32],byte[],byte[64],byte[192],uint64,uint8)void"
     ),
     "noop_budget": "noop_budget()void",
+    "retire": "retire(uint64)void",
 }
 METHODS: dict[str, Method] = {name: Method.from_signature(sig) for name, sig in _SIGNATURES.items()}
 

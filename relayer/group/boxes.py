@@ -118,6 +118,23 @@ def m4_submit_update_box_sizes(gen: int, key_box_indices: set[int], *, include_f
     return sizes
 
 
+def m4_retire_box_sizes(gen: int) -> dict[bytes, int]:
+    """M4's `retire(gen)` (§8.4) real box set: ALL 8 key boxes (unlike
+    `submit_update`, which only touches the boxes its bitfield mode visits,
+    `retire` unconditionally deletes every key box) plus `a:<gen>` --
+    `install_delete_committee_boxes`'s exact real footprint. Same closed
+    form as `m4_install_open_box_sizes`/`m4_submit_update_box_sizes`'s k=8
+    worst case: 8*6,144 + 96 = 49,248 B -> ceil(49248/2048) = 25 refs -> 4
+    transactions. `retire` was never wired to anything before this pass
+    (see relayer/client.py's `_retire_generation`/`retire_old_generations`)
+    so this is the first real caller of this box-reference math for a
+    DELETE rather than a CREATE/read -- confirmed live to need the same
+    plan, not assumed."""
+    sizes: dict[bytes, int] = {key_box_name(gen, j): KEY_BOX_BYTES for j in range(BOXES_PER_COMMITTEE)}
+    sizes[total_box_name(gen)] = TOTAL_BOX_BYTES
+    return sizes
+
+
 def m4_install_open_box_sizes(gen: int) -> dict[bytes, int]:
     """§7.4's consistency check: reproduces `MIN_BOX_REFS_FOR_INSTALL_OPEN`
     (`contracts/sync_committee/constants.py`) exactly -- 8 key boxes

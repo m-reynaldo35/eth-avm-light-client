@@ -26,7 +26,7 @@ from relayer.drivers import m6_account_storage as m6  # noqa: F401 -- re-exporte
 from relayer.drivers import m7_receipt as m7
 from relayer.drivers import m8_anchor as m8
 from relayer.errors import RetryReplanned, TierUnsupported
-from relayer.group.boxes import key_box_name, session_box_name, total_box_name
+from relayer.group.boxes import key_box_name, m4_retire_box_sizes, plan_box_refs, session_box_name, total_box_name
 from relayer.group.donors import donor_transaction_with_signer, puya_compile_contracts
 from relayer.group.submit import run as submit_run
 from relayer.proofs import account as account_proof
@@ -511,14 +511,32 @@ class EthAvmClient:
     # ------------------------------------------------------------------
     # sync() -- M4
     # ------------------------------------------------------------------
-    def sync(self, *, install: bool = False, update: bool = True, bootstrap_root: bytes | None = None) -> SyncResult:
+    def sync(self, *, install: bool = False, update: bool = True, bootstrap_root: bytes | None = None,
+              auto_retire: bool = True) -> SyncResult:
         """§9.1: resumes purely from on-chain `inst_state`/`inst_cursor`,
         never a local progress file (§18 item 14). Drives the real,
         non-simulated multi-transaction M4 sequence (bootstrap -> box-open
         -> 64x `install_chunk` -> `install_finalize` -> `submit_update`)
         via `relayer.group.submit.run`, matching `test_live_e2e_finality.
         py`'s own real fixture procedure but generically, through this
-        facade, instead of hand-rolled test code."""
+        facade, instead of hand-rolled test code.
+
+        **Retirement gap closed this pass**: `retire(gen)` (§8.4) -- a real,
+        permissionless, deployed contract method that refunds a superseded
+        generation's ~19.76 ALGO of key-box MBR back to the app account --
+        had no caller anywhere in this codebase before this pass; every
+        real committee rollover just permanently locked another
+        generation's worth of box MBR with no automatic reclamation, even
+        though the contract itself has always supported reclaiming it.
+        `auto_retire=True` (the default) calls `retire_old_generations()`
+        after `update`'s own submission, on every `sync(update=True)`, so
+        this now self-heals automatically rather than needing a caller to
+        remember a separate manual step. It is gated on `update` (not
+        `install`) because only a `submit_update` rollover can ever create
+        a newly-retireable generation, and on `self.config.has_signer`
+        (retiring submits real transactions, so a read-only/no-signer
+        client silently skips it rather than raising -- matching every
+        other write path's own has_signer convention)."""
         if self.config.m4_app_id is None:
             raise ValueError("sync() needs m4_app_id configured")
         detail: dict = {}
@@ -526,7 +544,109 @@ class EthAvmClient:
             detail["install"] = self._drive_m4_install(bootstrap_root)
         if update:
             detail["update"] = self._drive_m4_update()
+            if auto_retire and self.config.has_signer:
+                detail["retire"] = self.retire_old_generations()
         return SyncResult(ok=True, detail=detail)
+
+    # ------------------------------------------------------------------
+    # retire() -- M4 §8.4, wired to a real caller for the first time this
+    # pass (grep for "retire" anywhere in `relayer/` before this pass
+    # returned nothing -- every real committee rotation permanently locked
+    # ~19.76 ALGO of box MBR with no automatic reclamation, even though the
+    # contract itself has always supported reclaiming it).
+    # ------------------------------------------------------------------
+    def retire_old_generations(self) -> dict:
+        """Scans every generation id ever allocated (`1..gen_counter`,
+        `gen_counter` itself is on-chain global state, §9.1's "the on-chain
+        state machine IS the checkpoint" -- no local bookkeeping of which
+        gens exist or were already retired) and retires whichever ones are
+        BOTH safe (not `cur_gen`/`next_gen`/`inst_gen`, exactly `retire`'s
+        own asserts) AND still real (its `a:<gen>` total box -- created only
+        at `install_finalize`, deleted only by `retire` -- still exists).
+
+        The `a:<gen>` existence check is a free, local `application_box_by_
+        name` read (no transaction, no fee) done BEFORE spending any real
+        transaction fees -- without it, a long-lived relayer would re-submit
+        a real (harmless but wasteful) no-op retire group for every already-
+        retired historical generation on every single sync() call forever,
+        since `gen_counter` only grows. This also cleans up any backlog a
+        pre-this-pass relayer left behind, not just the generation this
+        exact sync() call may have just superseded.
+
+        Per-generation failures (already retired by a concurrent/previous
+        run, a race where the generation became `next_gen`/`inst_gen`
+        again, or a real network hiccup) are caught individually and
+        reported in the returned dict's `failed` list -- one bad generation
+        must never abort the whole sync() call or the retirement of OTHER,
+        unrelated generations."""
+        if self.config.m4_app_id is None:
+            raise ValueError("retire_old_generations() needs m4_app_id configured")
+        if not self.config.has_signer:
+            raise ValueError("retire_old_generations() needs a signer configured to submit real transactions")
+
+        gs = self._read_global_state(self.config.m4_app_id)
+        cur_gen = gs.get(b"cur_gen", 0)
+        next_gen = gs.get(b"next_gen", 0)
+        inst_gen = gs.get(b"inst_gen", 0)
+        gen_counter = gs.get(b"gen_counter", 0)
+        protected = {0, cur_gen, next_gen, inst_gen}
+
+        retired: list[dict] = []
+        skipped_already_retired: list[int] = []
+        failed: list[dict] = []
+        for gen in range(1, gen_counter + 1):
+            if gen in protected:
+                continue
+            try:
+                self.algod.application_box_by_name(self.config.m4_app_id, total_box_name(gen))
+            except Exception as exc:  # noqa: BLE001
+                if getattr(exc, "code", None) == 404:
+                    skipped_already_retired.append(gen)
+                    continue
+                failed.append({"gen": gen, "error": f"could not check a:{gen} existence: {exc}"})
+                continue
+            try:
+                retired.append(self._retire_generation(gen))
+            except Exception as exc:  # noqa: BLE001 -- a real, legitimate retire failure (e.g. a race that
+                # made `gen` become next_gen/inst_gen again between the read above and this submission, or a
+                # concurrent relayer already retired it) must not corrupt state or abort the rest of this scan.
+                failed.append({"gen": gen, "error": str(exc)})
+
+        return {"retired": retired, "skipped_already_retired": skipped_already_retired, "failed": failed}
+
+    def _retire_generation(self, gen: int) -> dict:
+        """A real, non-simulated `[retire, noop_budget*]` atomic group.
+        `retire(gen)` deletes ALL 8 key boxes (6,144 B each) plus `a:<gen>`
+        (96 B) -- 49,248 B of real declared box content, `plan_box_refs`'s
+        same closed form already proven for `submit_update`'s k=8 worst
+        case (§7.4): 25 refs, 4 transactions, since a DELETE is charged the
+        pooled per-ref write budget at the box's full declared size exactly
+        like a read/write is (measured live this pass -- retire's own
+        Box.delete calls are the first real caller of this box-reference
+        math for a delete rather than a create/read). `retire`'s own
+        transaction claims the first 8 refs; the rest ride on `noop_budget`
+        filler transactions in the same group, the same convention
+        `_submit_update_group` already uses."""
+        signer = self._signer()
+        sizes = m4_retire_box_sizes(gen)
+        plan = plan_box_refs(sizes)
+        refs = list(plan.distinct_boxes)
+        base = list(refs)
+        while len(refs) < plan.refs_required:
+            refs.append(base[len(refs) % len(base)])
+
+        retire_boxes, remaining = refs[:8], refs[8:]
+        filler_chunks = [remaining[i:i + 8] for i in range(0, len(remaining), 8)]
+
+        atc = AtomicTransactionComposer()
+        self._add_m4_call(atc, signer, "retire", [gen], boxes=[(0, b) for b in retire_boxes])
+        for fb in filler_chunks:
+            self._add_m4_call(atc, signer, "noop_budget", [], boxes=[(0, b) for b in fb])
+        result = atc.execute(self.algod, 4)
+        return {
+            "gen": gen, "tx_ids": result.tx_ids, "confirmed_round": result.confirmed_round,
+            "refs_required": plan.refs_required, "txns_required": plan.txns_required,
+        }
 
     def _add_m4_call(self, atc, signer, name: str, args: list, boxes=None) -> None:
         sp = self.algod.suggested_params()
@@ -663,15 +783,43 @@ class EthAvmClient:
         if not self.config.has_signer or self.config.donor_issuer_id is None:
             raise ValueError("sync(update=True) needs a signer and donor_issuer_id/donor_callee_id configured")
 
-        mode, plan = m4.plan_submit_update_boxes(args.sync_committee_bits, cur_gen)
-        result = self._submit_update_group(cur_gen, args, mode, plan)
+        # §6.4/step 5 of `submit_update`: a signature signed in `store_period
+        # + 1` is verified against `next_gen`'s installed committee, NOT
+        # `cur_gen`'s -- a real bug found and fixed THIS pass (retire()
+        # needed a genuine rollover to prove itself against, and driving one
+        # surfaced this): this call used to hardcode `cur_gen` into both the
+        # box-reference plan and the submitted group's box names regardless
+        # of which committee the contract would actually use, which is only
+        # ever correct for the `using_next == False` case. A real
+        # `using_next == True` submission would have referenced `cur_gen`'s
+        # key boxes while the contract read `next_gen`'s, a structural
+        # box-reference mismatch that could never have committed on-chain --
+        # meaning `sync(update=True)` could never have driven a real
+        # rollover at all before this fix, independent of `retire()`.
+        store_period = fin_slot_onchain // 8192
+        update_signature_period = args.signature_slot // 8192
+        using_next = update_signature_period == store_period + 1
+        if using_next:
+            next_gen_onchain = gs.get(b"next_gen", 0)
+            if next_gen_onchain == 0:
+                return {
+                    "skipped": "signature period is store_period + 1 but next_gen is not yet installed",
+                    "store_period": store_period, "update_signature_period": update_signature_period,
+                }
+            committee_gen = next_gen_onchain
+        else:
+            committee_gen = cur_gen
+
+        mode, plan = m4.plan_submit_update_boxes(args.sync_committee_bits, committee_gen)
+        result = self._submit_update_group(committee_gen, args, mode, plan)
         from relayer.codec.header import hash_tree_root_beacon_block_header
 
         return {
             "fin_slot": new_finalized_slot,
             "fin_root": hash_tree_root_beacon_block_header(args.finalized_header).hex(),
             "fin_state_root": args.finalized_header[48:80].hex(),
-            "mode": mode, "refs_required": plan.refs_required,
+            "mode": mode, "committee_gen": committee_gen, "using_next": using_next,
+            "refs_required": plan.refs_required,
             "txns_required_for_boxes": plan.txns_required, "n_donors": result.n_donors,
             "measured_consumed": result.measured_consumed, "tx_ids": result.tx_ids,
             "confirmed_round": result.confirmed_round,
