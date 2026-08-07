@@ -38,7 +38,9 @@ def compiled(algod_available, anchor_src, bench_src):
 
 
 @pytest.fixture(scope="module")
-def account():
+def account(algod_available):
+    if not algod_available:
+        pytest.skip("no dev-mode algod reachable")
     algod = algod_client()
     kmd = kmd_client()
     return funded_account(algod, kmd)

@@ -221,7 +221,9 @@ def compiled_m4_bench(algod_available):
 
 
 @pytest.fixture(scope="module")
-def account():
+def account(algod_available):
+    if not algod_available:
+        pytest.skip("no dev-mode algod reachable")
     algod = algod_client()
     kmd = kmd_client()
     return funded_account(algod, kmd)
@@ -317,19 +319,20 @@ def finalized_m4(installed_committee, live_data):
     issuer_id = installed_committee["issuer_id"]
     callee_id = installed_committee["callee_id"]
     fu_now_args = live_data["fu_now_args"]
-    mode, box_refs = _choose_mode_and_boxes(fu_now_args.sync_committee_bits, GEN)
-    # Same real, reproducible live-participation budget fragility
-    # test_live_e2e.py's own docstring documents in `_choose_mode_and_boxes`
-    # (there: "box read budget (6144) exceeded"; this run, on a DIFFERENT
-    # day's real participation bitfield: "box read budget (18432)
-    # exceeded" -- a bigger number, confirming this really is live-data-
-    # dependent, not a fixed constant to hardcode a fix for). Pad up to the
-    # structural 16-total-box-refs-per-2-txn-group cap (8 on `submit_update`
-    # itself + 8 on the donor sibling, M4's own §16.2 measured limit) --
-    # maximal available headroom within that structural cap, not a
-    # hand-tuned guess.
-    padded_box_refs = (box_refs + box_refs)[:16]
-    result = _submit_update_group(h, issuer_id, callee_id, fu_now_args, fu_now_args.signature, mode, padded_box_refs)
+    mode, box_refs, plan = _choose_mode_and_boxes(fu_now_args.sync_committee_bits, GEN)
+    # FIXED (this pass): the ad hoc `(box_refs + box_refs)[:16]` padding
+    # below this comment -- capped at the structural 2-transaction/16-ref
+    # ceiling -- used to compensate for `_choose_mode_and_boxes` never
+    # accounting for real box byte size, the exact root cause of the
+    # "box read budget (6144)"/"(18432)" failures this comment used to
+    # describe as live-data fragility with no fixed-constant fix. Real
+    # high-participation DIRECT mode can genuinely need MORE than 16 refs
+    # (up to 25, per relayer.group.boxes.plan_box_refs's own closed form) --
+    # a fixed 16-ref ceiling could never have covered that case regardless
+    # of padding. `_submit_update_group` now sizes the real transaction
+    # count (donor + as many noop_budget fillers as needed + submit_update)
+    # from the real `plan` directly.
+    result = _submit_update_group(h, issuer_id, callee_id, fu_now_args, fu_now_args.signature, mode, box_refs, plan=plan)
     assert result.tx_ids, "real submit_update did not commit"
     return h
 

@@ -126,6 +126,7 @@ from algosdk.atomic_transaction_composer import (
 )
 
 from relayer.drivers import m4_sync_committee as m4sc
+from relayer.group.boxes import plan_box_refs
 from relayer.sources import beacon
 from tests.sync_committee import reference as ref
 from tests.sync_committee.conftest import ALGOD_ADDRESS, TOKEN, SyncCommitteeLiveHarness
@@ -153,6 +154,9 @@ NEXT_SC_GINDEX = 87
 
 GEN = 1  # first bootstrap on a fresh app always assigns gen_counter -> 1
 KEYS_PER_BOX = 64
+KEY_BOX_BYTES = 6144  # real declared size, contracts/sync_committee/constants.py's KEY_BOX_BYTES
+FORKS_BOX_BYTES = 576  # real declared size, contracts/sync_committee/forks.py's FORKS_BOX_BYTES
+TOTAL_BOX_BYTES = 96  # G1_UNCOMPRESSED_BYTES, the A_total box's real declared size
 CHUNK_SIZE = 8  # max chunk that fits a single ARC-4 call's 2,048 B app-args cap
 CHUNK_DONORS = 40  # >= ~26 measured minimum (real g1_bind x8 + ec_add + merkleize), margin for safety
 FINALIZE_DONORS = 15
@@ -171,19 +175,30 @@ def total_box_name(gen: int) -> bytes:
     return b"a:" + gen.to_bytes(8, "big")
 
 
-def _choose_mode_and_boxes(sync_committee_bits: bytes, gen: int) -> tuple[int, list]:
+def _choose_mode_and_boxes(sync_committee_bits: bytes, gen: int):
     """Real mainnet participation is NOT guaranteed to be a fixed number
     across separate live fetches (it moves block to block) -- this computes,
     from the ACTUAL fetched bitfield, which key boxes `aggregate_participants`
     will really touch under each mode (`bitfield.py`'s `walk_and_accumulate`:
     direct mode touches participant-holding boxes, complement mode touches
     absentee-holding boxes plus the `a:<gen>` total box) and picks whichever
-    real box-reference set is smaller -- the same "adaptive" choice
-    `submit_update`'s own `mode` argument exists for (design doc §5.4), just
-    made by the relayer/test from the real bitfield instead of hardcoded.
-    Falls back to direct mode's participant set if that is cheaper (e.g. a
-    near-empty committee response, which real mainnet data never actually
-    produces, but the logic must not assume otherwise)."""
+    mode is really cheaper.
+
+    FIXED (this pass): the original version picked the mode with fewer
+    DISTINCT boxes touched, which is only the first term of
+    `relayer.group.boxes.plan_box_refs`'s real closed form
+    (`refs = max(len(distinct), ceil(bytes/2048))`). Every M4 key box is a
+    real, declared 6,144 B regardless of how many bits happen to fall in
+    it, so at real high participation (few absentee boxes, e.g. 1-3),
+    DIRECT mode's touched-box COUNT can look cheap while its real BYTE
+    term is not -- this is the exact, now-identified root cause of every
+    "box read/write budget (N) exceeded" failure this project's own
+    history has hit in this file and its callers (6144, 18432, 20480,
+    22528 -- all real, all this one mechanism, confirmed live).
+
+    Returns `(mode, box_refs, plan)` -- `plan` (a `BoxRefPlan`) is what
+    `_submit_update_group` now sizes the real transaction count from,
+    instead of assuming 2 transactions always suffice."""
 
     def bit_set(i: int) -> bool:
         byte = sync_committee_bits[i // 8]
@@ -192,11 +207,22 @@ def _choose_mode_and_boxes(sync_committee_bits: bytes, gen: int) -> tuple[int, l
     participant_boxes = sorted({i // KEYS_PER_BOX for i in range(512) if bit_set(i)})
     absentee_boxes = sorted({i // KEYS_PER_BOX for i in range(512) if not bit_set(i)})
 
-    if len(absentee_boxes) <= len(participant_boxes):
+    def plan_for(key_boxes: list[int], *, include_total: bool):
+        sizes = {"forks": FORKS_BOX_BYTES}
+        for j in key_boxes:
+            sizes[f"k:{j}"] = KEY_BOX_BYTES
+        if include_total:
+            sizes["total"] = TOTAL_BOX_BYTES
+        return plan_box_refs(sizes)
+
+    plan_direct = plan_for(participant_boxes, include_total=False)
+    plan_complement = plan_for(absentee_boxes, include_total=True)
+
+    if plan_complement.refs_required <= plan_direct.refs_required:
         boxes = [(0, b"forks")] + [(0, key_box_name(gen, j)) for j in absentee_boxes] + [(0, total_box_name(gen))]
-        return 1, boxes
+        return 1, boxes, plan_complement
     boxes = [(0, b"forks")] + [(0, key_box_name(gen, j)) for j in participant_boxes]
-    return 0, boxes
+    return 0, boxes, plan_direct
 
 
 def _beacon_reachable() -> bool:
@@ -370,17 +396,52 @@ def _submit_update_group(
     mode: int,
     box_refs: list,
     finality_branch: bytes | None = None,
+    plan=None,
 ):
-    """Builds and executes the real (non-simulated) `[DonorIssuer, submit_update]`
-    atomic group, splitting `box_refs` across both transactions if there are
-    more than 8 (submit_update's own per-transaction cap) -- see
-    `_issue_donor_txn`'s docstring."""
+    """Builds and executes the real (non-simulated) `[DonorIssuer,
+    noop_budget*, submit_update]` atomic group.
+
+    FIXED (this pass): the original version always assumed a fixed
+    2-transaction shape (`[DonorIssuer, submit_update]`), splitting
+    `box_refs` across only those two -- structurally incapable of the
+    25-ref/4-transaction real worst case `plan_box_refs` can compute (real
+    high-participation DIRECT mode). This now sizes the group's real
+    transaction count from `plan.txns_required` (falls back to computing
+    a plan from `len(box_refs)` alone if the caller doesn't pass one, for
+    the few call sites that build `box_refs` by hand rather than via
+    `_choose_mode_and_boxes`), mirroring `relayer/client.py`'s own
+    `_submit_update_group` exactly: the donor's own `foreign_apps`
+    reference counts against its per-transaction ref budget too (real,
+    live-confirmed finding), so its padding capacity is 7 boxes, not 8;
+    `submit_update` and each `noop_budget` filler still get the full 8."""
+    if plan is None:
+        plan = plan_box_refs({f"box{i}": 1 for i, _ in enumerate(box_refs)})
+
+    refs = list(box_refs)
+    if refs:
+        base = list(refs)
+        while len(refs) < plan.refs_required:
+            refs.append(base[len(refs) % len(base)])
+
+    submit_boxes, remaining = refs[:8], refs[8:]
+    donor_boxes, remaining = remaining[:7], remaining[7:]
+    filler_chunks = [remaining[i:i + 8] for i in range(0, len(remaining), 8)]
+
     method = Method.undictify(h.methods["submit_update"])
+    noop_method = Method.undictify(h.methods["noop_budget"])
     signer = AccountTransactionSigner(h.sk)
     atc = AtomicTransactionComposer()
 
-    submit_boxes, overflow_boxes = box_refs[:8], box_refs[8:]
-    atc.add_transaction(_issue_donor_txn(h, issuer_id, callee_id, SUBMIT_DONORS, extra_boxes=overflow_boxes or None))
+    atc.add_transaction(_issue_donor_txn(h, issuer_id, callee_id, SUBMIT_DONORS, extra_boxes=donor_boxes or None))
+
+    for fb in filler_chunks:
+        sp = h.algod.suggested_params()
+        sp.flat_fee = True
+        sp.fee = 1000
+        atc.add_method_call(
+            app_id=h.app_id, method=noop_method, sender=h.sender, sp=sp, signer=signer,
+            method_args=[], boxes=fb,
+        )
 
     sp = h.algod.suggested_params()
     sp.flat_fee = True
@@ -540,8 +601,8 @@ def test_live_finality_update_verifies_and_advances_state_for_real(installed_com
     callee_id = installed_committee["callee_id"]
     fu_now_args = live_data["fu_now_args"]
 
-    mode, box_refs = _choose_mode_and_boxes(fu_now_args.sync_committee_bits, GEN)
-    result = _submit_update_group(h, issuer_id, callee_id, fu_now_args, fu_now_args.signature, mode, box_refs)
+    mode, box_refs, plan = _choose_mode_and_boxes(fu_now_args.sync_committee_bits, GEN)
+    result = _submit_update_group(h, issuer_id, callee_id, fu_now_args, fu_now_args.signature, mode, box_refs, plan=plan)
     assert result.tx_ids, "real submit_update group did not commit"
 
     expected_finalized_slot = int.from_bytes(fu_now_args.finalized_header[0:8], "little")
@@ -579,10 +640,10 @@ def test_corrupted_signature_is_rejected_live(installed_committee, beacon_availa
     corrupted_sig = bytes(sig)
     assert corrupted_sig != fu_next_args.signature
 
-    mode, box_refs = _choose_mode_and_boxes(fu_next_args.sync_committee_bits, GEN)
+    mode, box_refs, plan = _choose_mode_and_boxes(fu_next_args.sync_committee_bits, GEN)
 
     with pytest.raises(Exception):
-        _submit_update_group(h, issuer_id, callee_id, fu_next_args, corrupted_sig, mode, box_refs)
+        _submit_update_group(h, issuer_id, callee_id, fu_next_args, corrupted_sig, mode, box_refs, plan=plan)
 
     info_after = h.algod.application_info(h.app_id)
     gstate_after = {base64.b64decode(kv["key"]): kv["value"] for kv in info_after["params"]["global-state"]}
@@ -608,10 +669,10 @@ def test_corrupted_merkle_branch_is_rejected_live(installed_committee, beacon_av
     corrupted_branch = bytes(branch)
     assert corrupted_branch != fu_next_args.finality_branch
 
-    mode, box_refs = _choose_mode_and_boxes(fu_next_args.sync_committee_bits, GEN)
+    mode, box_refs, plan = _choose_mode_and_boxes(fu_next_args.sync_committee_bits, GEN)
 
     with pytest.raises(Exception):
         _submit_update_group(
             h, issuer_id, callee_id, fu_next_args, fu_next_args.signature, mode, box_refs,
-            finality_branch=corrupted_branch,
+            finality_branch=corrupted_branch, plan=plan,
         )

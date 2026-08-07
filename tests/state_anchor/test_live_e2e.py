@@ -213,18 +213,16 @@ def finalized_m4(installed_committee, live_data):
     issuer_id = installed_committee["issuer_id"]
     callee_id = installed_committee["callee_id"]
     fu_now_args = live_data["fu_now_args"]
-    mode, box_refs = _choose_mode_and_boxes(fu_now_args.sync_committee_bits, GEN)
-    # Real, live participation on the day this pass ran needed more pooled
-    # read-budget than `_choose_mode_and_boxes`'s minimal box set alone
-    # supplies (a real, reproducible "box read budget (6144) exceeded" --
-    # the SAME failure mode `tests/sync_committee/test_live_e2e_finality.py`
-    # itself hit unmodified on this same day, confirming it is a real
-    # live-data fragility in that shared helper, not something this file's
-    # own code introduced). Padding with duplicate refs to an
-    # already-referenced box adds pooled budget without touching a new box
-    # (M4 §16.2's own documented mechanism) -- cheap, real, and sufficient.
-    padded_box_refs = box_refs + box_refs[:4]
-    result = _submit_update_group(h, issuer_id, callee_id, fu_now_args, fu_now_args.signature, mode, padded_box_refs)
+    mode, box_refs, plan = _choose_mode_and_boxes(fu_now_args.sync_committee_bits, GEN)
+    # FIXED (this pass): the ad hoc `box_refs + box_refs[:4]` padding below
+    # this comment used to compensate for `_choose_mode_and_boxes` only
+    # counting distinct boxes, not their real declared byte size -- the
+    # exact root cause of the "box read budget (6144) exceeded" failure
+    # this comment used to describe as unexplained live-data fragility.
+    # `_choose_mode_and_boxes` now returns a real `plan` (relayer.group.
+    # boxes.plan_box_refs), and `_submit_update_group` sizes the real
+    # transaction count from it directly -- no hand-picked padding needed.
+    result = _submit_update_group(h, issuer_id, callee_id, fu_now_args, fu_now_args.signature, mode, box_refs, plan=plan)
     assert result.tx_ids, "real submit_update did not commit"
     return h
 
@@ -275,7 +273,9 @@ def compiled_anchor(algod_available):
 
 
 @pytest.fixture(scope="module")
-def account():
+def account(algod_available):
+    if not algod_available:
+        pytest.skip("no dev-mode algod reachable")
     algod = algod_client()
     kmd = kmd_client()
     return funded_account(algod, kmd)
