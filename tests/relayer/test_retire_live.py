@@ -57,6 +57,19 @@ same amount of real, already-resident ALGO to become spendable again
 (`amount - min-balance` rises by exactly the refund). This suite asserts
 that real property, not a literal `amount` increase, and states plainly
 why.
+
+**This pass's own addition (test_r4, below):** `test_r1` above proves
+exactly ONE real rollover-then-retire cycle. That leaves a real, explicitly
+named gap open: does the recycling actually hold up over MULTIPLE
+consecutive real rotations, or could something drift/compound/leak across
+cycles that a single cycle's own before/after snapshot cannot reveal (a
+stale global-state field, a box left half-deleted, a peak that creeps
+upward cycle over cycle)? `test_r4` drives THREE full real install-ahead ->
+rollover -> auto-retire cycles back to back, across four real, historical
+periods (1810 -> 1811 -> 1812 -> 1813), through the SAME production
+`EthAvmClient.sync(update=True)` entry point `test_r1` uses, in its own
+freshly-deployed environment (`env_retire_multi`, independent of
+`env_retire` above so the two suites' on-chain state never interacts).
 """
 from __future__ import annotations
 
@@ -65,6 +78,7 @@ from algosdk import logic, transaction
 from algosdk.abi import Method
 from algosdk.atomic_transaction_composer import AccountTransactionSigner, AtomicTransactionComposer
 
+from deploy.inspect import list_boxes
 from deploy.mbr import box_mbr
 from relayer.codec.bls import g1_compressed_to_avm
 from relayer.codec.committee import committee_root
@@ -377,4 +391,309 @@ def test_r3_retire_old_generations_noop_on_a_brand_new_contract(donor_pair):
         f"\nM4 REAL LIVE PROOF: retire_old_generations() on a brand-new M4 app {h.app_id} "
         "(gen_counter==0, no committee ever installed) is a genuine no-op -- no transactions submitted, "
         "no error raised."
+    )
+
+
+# ---------------------------------------------------------------------------
+# This pass's own real gap: does the recycling proven above by test_r1 hold
+# up over MULTIPLE consecutive real rotations, not just one? Reuses
+# PERIOD_P/PERIOD_P1 as the first two periods and extends two more real,
+# already-elapsed mainnet periods -- four periods in total, giving THREE
+# full install-ahead -> rollover -> auto-retire cycles (gen1->gen2->gen3->
+# gen4), the real minimum-plus-one bar for "proves it's not a one-off" (the
+# task's own bar was >= 2 cycles / 3-4 periods).
+#
+# A SEPARATE, freshly-deployed M4 app is used (`env_retire_multi`'s own
+# `_deploy_m4()` call) -- this suite drives three rollovers against it, so
+# it must never share on-chain state with `env_retire`'s own single-cycle
+# environment above (`test_r1`/`test_r2`/`test_r3`).
+# ---------------------------------------------------------------------------
+PERIOD_P2 = PERIOD_P1 + 1
+PERIOD_P3 = PERIOD_P2 + 1
+
+
+def _fetch_period_data(period: int) -> dict:
+    """Same real transform/assert shape `historical_period_data` already
+    applies to PERIOD_P/PERIOD_P1 inline, generalised to any single period:
+    fetches `period`'s own real, BLS-signature-verified update and folds
+    out its `next_sync_committee` (i.e. real committee data for `period +
+    1`) into ready-to-install `(compressed, uncompressed)` pairs plus its
+    aggregate key -- exactly what `env_retire`'s own fixture body does
+    inline for PERIOD_P, just made reusable across four periods."""
+    update = beacon.fetch_updates(period, 1)[0]
+    args = m4.transform_light_client_update(update)
+    assert "next_sync_committee" in update["data"], f"period {period}'s real update carries no next_sync_committee"
+    nsc = update["data"]["next_sync_committee"]
+    next_root_check = committee_root(nsc["pubkeys"], nsc["aggregate_pubkey"])
+    assert next_root_check == args.next_committee_root, "real next_sync_committee does not fold to its own proven root"
+    next_pairs = [g1_compressed_to_avm(pk) for pk in nsc["pubkeys"]]
+    next_agg_compressed, next_agg_uncompressed = g1_compressed_to_avm(nsc["aggregate_pubkey"])
+    assert len(next_pairs) == 512
+    return {
+        "period": period, "update": update, "args": args, "next_pairs": next_pairs,
+        "next_agg_compressed": next_agg_compressed, "next_agg_uncompressed": next_agg_uncompressed,
+    }
+
+
+@pytest.fixture(scope="module")
+def historical_period_data_multi():
+    if not BEACON_AVAILABLE:
+        pytest.skip("no reachable beacon-API endpoint in the pool")
+    periods = [_fetch_period_data(p) for p in (PERIOD_P, PERIOD_P1, PERIOD_P2, PERIOD_P3)]
+
+    checkpoint_root = hash_tree_root_beacon_block_header(periods[0]["args"].finalized_header)
+    boot_resp = beacon.fetch_bootstrap(checkpoint_root.hex())
+    boot_args = m4.transform_bootstrap(boot_resp)
+    assert hash_tree_root_beacon_block_header(boot_args.header) == checkpoint_root
+    assert len(boot_args.pubkey_pairs) == 512
+
+    return {"periods": periods, "checkpoint_root": checkpoint_root, "boot_args": boot_args}
+
+
+@pytest.fixture(scope="module")
+def env_retire_multi(historical_period_data_multi, donor_pair):
+    """Only gen 1 (genesis, bootstrapped from PERIOD_P's real checkpoint)
+    and this environment's real extra funding are set up here; the actual
+    install-ahead/rollover/retire cycles are driven inside the test itself
+    so each cycle's real, measured intermediate balances can be recorded
+    and compared cycle-to-cycle."""
+    if not ALGOD_AVAILABLE:
+        pytest.skip("no dev-mode algod reachable")
+    h = _deploy_m4()
+    client = _client_for(h, donor_pair)
+    d = historical_period_data_multi
+
+    install_result = client.sync(install=True, update=False, bootstrap_root=d["checkpoint_root"])
+    assert install_result.ok
+    gs = client._read_global_state(h.app_id)
+    assert gs[b"cur_gen"] == 1, "genesis install must land as cur_gen"
+
+    # Same real peak-sizing reasoning as `env_retire` above: at most TWO
+    # generations' worth of key-box MBR ever coexist at once (the old one
+    # is retired before a third is ever installed), so the SAME extra
+    # funding suffices for all three cycles, not just one.
+    app_address = logic.get_application_address(h.app_id)
+    sp = h.algod.suggested_params()
+    pay = transaction.PaymentTxn(h.sender, sp, app_address, EXTRA_APP_FUNDING_MICROALGO)
+    txid = h.algod.send_transaction(pay.sign(h.sk))
+    transaction.wait_for_confirmation(h.algod, txid, 4)
+
+    return {"h": h, "client": client, "app_address": app_address, "donor_pair": donor_pair, "periods": d["periods"]}
+
+
+def _discovery_resubmit(client, committee_gen: int, args, expected_next_period: int) -> None:
+    """Re-submits `args` (a period's OWN real update, already reflected
+    on-chain as the store's current finality) as a non-advancing
+    `submit_update`, purely for its opportunistic next-committee discovery
+    side effect (verifier.py module docstring elaboration 2) -- the SAME
+    real method `env_retire`'s own fixture already calls directly for
+    PERIOD_P/PERIOD_P1's discovery step, generalised here to run once per
+    cycle: `next_committee_root_trusted`/`_period` are never reset by
+    `install_begin`/`install_finalize`, but they are also never advanced to
+    a FURTHER-OUT period except by a fresh discovery submission like this
+    one, so each of the three cycles below needs its own."""
+    mode, plan = m4.plan_submit_update_boxes(args.sync_committee_bits, committee_gen)
+    result = client._submit_update_group(committee_gen, args, mode, plan)
+    assert result.tx_ids, "the real discovery submit_update did not commit"
+    gs = client._read_global_state(client.config.m4_app_id)
+    assert gs[b"next_committee_root_trusted"] == args.next_committee_root
+    assert gs[b"next_committee_root_period"] == expected_next_period
+
+
+def _install_ahead(h, client, donor_pair, gen: int, period: int,
+                    next_pairs, next_agg_compressed, next_agg_uncompressed) -> None:
+    """The real `install_begin -> install_open_keys -> install_open_session
+    -> 64x install_chunk -> install_finalize` sequence for a non-genesis
+    generation, factored out of `env_retire`'s own inline body above so
+    this suite can run it three times (once per cycle) without hand-copying
+    it three times over."""
+    key_refs = [(0, key_box_name(gen, j)) for j in range(8)]
+    session_ref = [(0, session_box_name(gen))]
+    atc = AtomicTransactionComposer()
+    _add_call(h, atc, "install_begin", [period], boxes=key_refs)
+    _add_call(h, atc, "install_open_keys", [], boxes=key_refs)
+    _add_call(h, atc, "install_open_session", [], boxes=session_ref + key_refs[:7])
+    _add_call(h, atc, "noop_budget", [], boxes=session_ref)
+    atc.execute(h.algod, 4)
+
+    gs = client._read_global_state(h.app_id)
+    assert gs[b"inst_state"] == 3, "install session must be INSTALLING after the box-opening group"
+    assert gs[b"inst_gen"] == gen
+
+    for start in range(0, 512, m4.INSTALL_CHUNK_SIZE):
+        chunk = next_pairs[start:start + m4.INSTALL_CHUNK_SIZE]
+        compressed_blob = b"".join(c for c, _u in chunk)
+        uncompressed_blob = b"".join(u for _c, u in chunk)
+        kb = key_box_name(gen, start // 64)
+        sb = session_box_name(gen)
+        atc2 = AtomicTransactionComposer()
+        atc2.add_transaction(donor_transaction_with_signer(
+            h.algod, h.sender, h.sk, donor_pair["issuer_id"], donor_pair["callee_id"], 40,
+        ))
+        _add_call(h, atc2, "install_chunk", [start, compressed_blob, uncompressed_blob],
+                  boxes=[(0, kb), (0, sb), (0, kb), (0, sb)])
+        atc2.execute(h.algod, 4)
+
+    atc3 = AtomicTransactionComposer()
+    atc3.add_transaction(donor_transaction_with_signer(
+        h.algod, h.sender, h.sk, donor_pair["issuer_id"], donor_pair["callee_id"], 10,
+    ))
+    _add_call(h, atc3, "install_finalize", [next_agg_compressed, next_agg_uncompressed],
+              boxes=[(0, session_box_name(gen)), (0, total_box_name(gen))])
+    atc3.execute(h.algod, 4)
+
+    gs = client._read_global_state(h.app_id)
+    assert gs[b"next_gen"] == gen
+    assert gs[b"next_period"] == period
+    assert gs[b"inst_state"] == 0
+
+
+def test_r4_three_consecutive_real_cycles_no_drift_no_leak(env_retire_multi, monkeypatch):
+    """The real gap this pass closes: `test_r1`'s single-cycle proof cannot
+    rule out drift/leak/compounding across REPEATED real rotations -- e.g.
+    a box left half-deleted, a stale global-state field silently growing,
+    or a peak that creeps upward cycle over cycle. This test drives THREE
+    full real install-ahead -> rollover -> auto-retire cycles back to back
+    (gen1->gen2->gen3->gen4, across real periods 1810->1811->1812->1813)
+    through the SAME production `EthAvmClient.sync(update=True)` entry
+    point `test_r1` uses for its single cycle, and asserts the real,
+    measured pattern holds identically every time: peak min-balance during
+    each install-ahead phase is IDENTICAL cycle to cycle (box names are
+    fixed-width, §7.4/`relayer/group/boxes.py` -- MBR is content-
+    independent, so there is no reason for it to differ), and the
+    post-retire baseline returns to EXACTLY the same value every cycle, not
+    creeping upward."""
+    h = env_retire_multi["h"]
+    client = env_retire_multi["client"]
+    app_address = env_retire_multi["app_address"]
+    donor_pair = env_retire_multi["donor_pair"]
+    periods = env_retire_multi["periods"]
+
+    expected_refund = sum(box_mbr(len(key_box_name(1, j)), 6144) for j in range(8)) + box_mbr(len(total_box_name(1)), 96)
+    assert expected_refund == 19_760_900
+
+    def _balance():
+        info = client.algod.account_info(app_address)
+        return info["amount"], info["min-balance"]
+
+    amount0, min_balance0 = _balance()
+    records: list[dict] = []
+    cur_gen = 1
+
+    for i in range(3):
+        d_cur, d_next = periods[i], periods[i + 1]
+        new_gen = cur_gen + 1
+
+        amount_pre, min_balance_pre = _balance()
+
+        # -- ahead-of-time install phase: discover the next period's real
+        #    trusted committee root, then run the real install_begin/...
+        #    /install_finalize sequence for it while `cur_gen` is still the
+        #    active committee (mirrors env_retire's own single-cycle body,
+        #    factored into `_discovery_resubmit`/`_install_ahead` above). --
+        _discovery_resubmit(client, cur_gen, d_cur["args"], d_next["period"])
+        _install_ahead(
+            h, client, donor_pair, new_gen, d_next["period"],
+            d_cur["next_pairs"], d_cur["next_agg_compressed"], d_cur["next_agg_uncompressed"],
+        )
+
+        amount_peak, min_balance_peak = _balance()
+        client.algod.application_box_by_name(h.app_id, total_box_name(cur_gen))  # still live, pre-retire
+
+        # -- THE real, production rollover call: the SAME EthAvmClient.
+        #    sync(update=True) entry point test_r1 proves for one cycle,
+        #    monkeypatched only on WHEN this period's real update is
+        #    fetched from, never WHAT it is (module docstring). Its own
+        #    new retire_old_generations() wiring fires automatically. --
+        monkeypatch.setattr(beacon, "fetch_finality_update", lambda u=d_next["update"]: u)
+        sync_result = client.sync(install=False, update=True)
+
+        update_detail = sync_result.detail["update"]
+        assert "skipped" not in update_detail, f"cycle {i + 1}: real rollover must not have been skipped: {update_detail}"
+        assert update_detail["using_next"] is True, f"cycle {i + 1}: signature period must be store_period + 1"
+        assert update_detail["committee_gen"] == new_gen
+
+        gs = client._read_global_state(h.app_id)
+        assert gs[b"cur_gen"] == new_gen, f"cycle {i + 1}: rollover must have promoted gen {new_gen} to cur_gen"
+        assert gs[b"next_gen"] == 0
+
+        retire_detail = sync_result.detail["retire"]
+        assert not retire_detail["failed"], f"cycle {i + 1}: no legitimate retire failure expected: {retire_detail['failed']}"
+        assert {r["gen"] for r in retire_detail["retired"]} == {cur_gen}, (
+            f"cycle {i + 1}: gen {cur_gen} (now superseded) should have been auto-retired this call"
+        )
+
+        with pytest.raises(Exception):  # noqa: B017 -- real 404, this generation's total box must genuinely be gone
+            client.algod.application_box_by_name(h.app_id, total_box_name(cur_gen))
+
+        amount_post, min_balance_post = _balance()
+
+        assert amount_pre == amount_peak == amount_post == amount0, (
+            f"cycle {i + 1}: amount must never move -- box MBR is a min-balance requirement, never a fund transfer "
+            f"(amount_pre={amount_pre}, amount_peak={amount_peak}, amount_post={amount_post}, amount0={amount0})"
+        )
+        assert min_balance_peak - min_balance_pre == expected_refund, (
+            f"cycle {i + 1}: installing generation {new_gen} ahead of time while generation {cur_gen} is still "
+            f"live must raise min-balance by exactly one generation's real box MBR "
+            f"(got {min_balance_peak - min_balance_pre}, expected {expected_refund})"
+        )
+        assert min_balance_post == min_balance_pre, (
+            f"cycle {i + 1}: post-retire min-balance ({min_balance_post}) must return to this cycle's own "
+            f"pre-install baseline ({min_balance_pre}) -- any difference would be real drift/leak"
+        )
+
+        records.append({
+            "cycle": i + 1, "retired_gen": cur_gen, "new_cur_gen": new_gen,
+            "period_retired": d_cur["period"], "period_now_current": d_next["period"],
+            "min_balance_pre": min_balance_pre, "min_balance_peak": min_balance_peak, "min_balance_post": min_balance_post,
+            "amount": amount_post, "tx_ids_retire": retire_detail["retired"][0]["tx_ids"],
+        })
+        cur_gen = new_gen
+
+    # -- cross-cycle: no drift. Every cycle's own pre-install baseline AND
+    #    the final post-retire value must be the exact same real number --
+    #    if anything leaked or compounded across repeated real cycles, this
+    #    is where it would show up. --
+    baselines = [min_balance0] + [r["min_balance_pre"] for r in records] + [records[-1]["min_balance_post"]]
+    assert len(set(baselines)) == 1, f"post-retire baseline drifted across cycles: {baselines}"
+    peaks = [r["min_balance_peak"] for r in records]
+    assert len(set(peaks)) == 1, f"peak min-balance differed across cycles (box names are fixed-width -- should be identical): {peaks}"
+    amounts = [amount0] + [r["amount"] for r in records]
+    assert len(set(amounts)) == 1, f"amount moved across cycles: {amounts}"
+
+    # -- orphan check: gens 1-3 (all now retired) must have NOTHING left on
+    #    chain -- not just their `a:<gen>` total box (already checked
+    #    per-cycle above via the real 404), but all 8 key boxes and the
+    #    session box too (already deleted at install_finalize time, per
+    #    `install_process_finalize`, so this doubles as confirmation that
+    #    retire's own cleanup is not silently relying on something
+    #    install_finalize already did). Only gen 4 (the final cur_gen)
+    #    should still have any boxes at all. --
+    box_names = set(list_boxes(client.algod, h.app_id))
+    for retired_gen in (1, 2, 3):
+        assert total_box_name(retired_gen) not in box_names, f"gen {retired_gen}'s total box orphaned"
+        assert session_box_name(retired_gen) not in box_names, f"gen {retired_gen}'s session box orphaned"
+        for j in range(8):
+            assert key_box_name(retired_gen, j) not in box_names, f"gen {retired_gen}'s key box {j} orphaned"
+    assert total_box_name(4) in box_names, "the final, still-active generation's total box should still be live"
+    for j in range(8):
+        assert key_box_name(4, j) in box_names, "the final, still-active generation's key boxes should still be live"
+
+    print(
+        "\nM4 REAL LIVE MULTI-CYCLE PROOF (this pass's own gap): three consecutive real rollover+auto-retire "
+        f"cycles at M4 app {h.app_id}, real periods 1810->1811->1812->1813, all driven through the real, "
+        "production EthAvmClient.sync(update=True):\n"
+        + "\n".join(
+            f"  cycle {r['cycle']} (retire gen {r['retired_gen']}, period {r['period_retired']} -> "
+            f"cur_gen {r['new_cur_gen']}, period {r['period_now_current']}): "
+            f"min-balance {r['min_balance_pre']} -> (install-ahead peak {r['min_balance_peak']}, "
+            f"+{r['min_balance_peak'] - r['min_balance_pre']}) -> {r['min_balance_post']} (post-retire, "
+            f"delta {r['min_balance_peak'] - r['min_balance_post']}); amount unchanged at {r['amount']}; "
+            f"retire tx_ids={r['tx_ids_retire']}"
+            for r in records
+        )
+        + f"\nPost-retire baseline identical across all cycles at {records[-1]['min_balance_post']} microALGO "
+        f"(no drift/leak across {len(records)} repeated cycles); peak identical every cycle at {peaks[0]} "
+        f"microALGO; amount constant throughout at {amounts[0]} microALGO; zero orphaned boxes for any of "
+        "the 3 retired generations, confirmed via a real application_boxes listing."
     )
