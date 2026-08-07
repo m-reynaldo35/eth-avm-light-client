@@ -68,6 +68,14 @@ test = [
     "remerkleable==0.1.28",
     "trie>=3.1",
     "PyYAML>=6",
+    # tests/sync_committee/vectors.py needs cramjam.snappy.decompress_raw to
+    # unpack the vendored .ssz_snappy consensus-spec-tests fixtures. Missing
+    # from this list originally (already installed locally from an earlier,
+    # undeclared pass) -- caught by the first real CI run this module ever
+    # triggered (tests/sync_committee/test_signing_root.py ModuleNotFoundError
+    # on a clean runner), exactly the class of bug ci-offline.yml exists to
+    # catch.
+    "cramjam>=2.11",
 ]
 contracts = ["puyapy==5.9.0"]
 
