@@ -40,9 +40,16 @@ jobs:
           python-version: ${{ matrix.python }}
           cache: pip
       - name: Install
+        # .[contracts] (puyapy) is needed here too, not just by the
+        # `contracts` job below: tests/harness/test_compile_gate.py's
+        # pytest tests (C1/C2/C3/C5) are correctly categorized `offline` in
+        # tiers.json -- puyapy is a pure local compiler, no network/Docker
+        # -- but were never actually runnable in this job until this line
+        # existed (a real gap, caught by this pass's own first real CI run:
+        # "No module named puyapy").
         run: |
           python -m pip install --upgrade pip
-          pip install -e ".[test]"
+          pip install -e ".[test,contracts]"
       - name: Offline tier
         # --offline: deselect needs_algod/needs_network/live_heavy, install
         # the socket guard, forbid skips among what remains (§4.2/§4.4).
