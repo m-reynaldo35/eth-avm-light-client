@@ -27,7 +27,7 @@ Contracts:
     group. This is the contract G2-M6 (a real, non-simulated 5-transaction
     submission) and the §5.4 security tests (S-M6-2/3/4) exercise live.
 """
-from algopy import Bytes, Contract, Txn, UInt64, itxn, log, op, subroutine
+from algopy import Bytes, Contract, OnCompleteAction, Txn, UInt64, itxn, log, op, subroutine
 
 from contracts.composer.account import mpt6_account_body, mpt6_storage_value
 from contracts.composer.bridge import (
@@ -419,6 +419,7 @@ class Mpt6ComposerApp(Contract):
     for measuring and testing §5/§6/§7's mechanism live."""
 
     def approval_program(self) -> bool:
+        assert Txn.on_completion == OnCompleteAction.NoOp, "D0"
         if Txn.application_id.id == UInt64(0):
             return True
         if Txn.num_app_args == UInt64(0):

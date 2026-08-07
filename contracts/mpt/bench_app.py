@@ -31,7 +31,7 @@ Contracts:
     bench/mpt_bench.py and the implementation report for what these
     measured in practice, including the honest gaps.
 """
-from algopy import Bytes, Contract, Txn, UInt64, itxn, log, op, subroutine
+from algopy import Bytes, Contract, OnCompleteAction, Txn, UInt64, itxn, log, op, subroutine
 
 from contracts.mpt.handoff import mpt_log_state, mpt_state_from_prev
 from contracts.mpt.state import (
@@ -359,6 +359,7 @@ class MptSegmentApp(Contract):
     and testing §7.3/§7.4's mechanism live."""
 
     def approval_program(self) -> bool:
+        assert Txn.on_completion == OnCompleteAction.NoOp, "V1"
         if Txn.application_id.id == UInt64(0):
             return True
         if Txn.num_app_args == UInt64(0):

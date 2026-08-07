@@ -36,7 +36,7 @@ the group actually produced it (MODE_INIT or MODE_NEXT), not necessarily
 `Txn.group_index - 1`; `mpt7_state_from_prev` already allows any earlier
 index, so this needs no special-casing here.
 """
-from algopy import Bytes, Contract, Txn, UInt64, log, op, subroutine
+from algopy import Bytes, Contract, OnCompleteAction, Txn, UInt64, log, op, subroutine
 
 from contracts.mpt.state import (
     WALK_ABSENT_BRANCH_TERM,
@@ -143,6 +143,7 @@ class Mpt7ReceiptApp(Contract):
     for measuring and testing §3/§5's T1/T2 mechanism live."""
 
     def approval_program(self) -> bool:
+        assert Txn.on_completion == OnCompleteAction.NoOp, "L1"
         if Txn.application_id.id == UInt64(0):
             return True
         if Txn.num_app_args == UInt64(0):
