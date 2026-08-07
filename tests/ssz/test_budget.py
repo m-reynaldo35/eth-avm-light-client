@@ -27,22 +27,18 @@ pytest.importorskip("algosdk")
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO_ROOT))
 
+from tests.harness.env import _algod_reachable  # noqa: E402
 from tests.ssz.generate_fixtures import VECTORS_JSON, simulate_create_args  # noqa: E402
 
 ALL_CASES = json.loads(VECTORS_JSON.read_text())
 
-
-def _algod_reachable() -> bool:
-    try:
-        from algosdk.v2client import algod
-
-        algod.AlgodClient("a" * 64, "http://localhost:4051").status()
-        return True
-    except Exception:
-        return False
-
-
-pytestmark = pytest.mark.skipif(not _algod_reachable(), reason="dev-mode algod not reachable on :4051")
+# 011 §4.1: module-level pytestmark is the explicit marker for exactly this
+# shape (a skipif-at-import-time boolean, no fixture for the tier
+# auto-marker to infer `needs_algod` from).
+pytestmark = [
+    pytest.mark.needs_algod,
+    pytest.mark.skipif(not _algod_reachable(), reason="dev-mode algod not reachable on :4051"),
+]
 
 
 @pytest.fixture(scope="module")

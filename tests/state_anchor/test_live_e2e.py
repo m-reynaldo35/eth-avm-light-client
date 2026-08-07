@@ -15,13 +15,16 @@ submission, and a REAL `attest` read whose `el_receipts_root` is
 byte-identical to the real chain's `receiptsRoot` for that exact block --
 the actual claim TP-M7-2/G1-M8 exist to prove, on real, current data rather
 than a historical fixture.
+
+M11 rebasing (docs/design/011-test-harness-ci.md §6.3): `installed_committee`/
+`finalized_m4` are now `tests.harness.m4`'s shared fixtures, driven through
+`EthAvmClient.sync()` rather than this file's own hand-rolled bootstrap/
+box-open/install_chunk copy -- the `_choose_mode_and_boxes` import and its
+`box_refs + box_refs[:4]` padding workaround are gone with it (§5.3/§5.4).
 """
 from __future__ import annotations
 
-import json
 import sys
-import time
-import urllib.request
 from pathlib import Path
 
 import pytest
@@ -29,35 +32,12 @@ import pytest
 REPO_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO_ROOT))
 
-from relayer.sources import beacon  # noqa: E402
-from relayer.sources import eth_rpc  # noqa: E402
-from relayer.proofs.receipts_trie import build_receipts_trie_and_path  # noqa: E402
+from relayer.proofs.receipts_trie import build_receipts_trie_and_path  # noqa: E402,F401
 from relayer.ssz import execution_payload as real_ssz  # noqa: E402
-from tests.state_anchor.conftest import (  # noqa: E402
-    Arc4Harness,
-    algod_client,
-    compile_teal,
-    deploy_donor_pair,
-    funded_account,
-    kmd_client,
-    patched_repo_copy,
-    puya_compile,
-)
+from tests.harness.deployment import puya_compile  # noqa: E402
+from tests.harness.m4 import checkpoint_data, finalized_m4, installed_committee, m4_donor_pair  # noqa: E402,F401
+from tests.state_anchor.harness import Arc4Harness  # noqa: E402
 from tests.sync_committee import reference as ref  # noqa: E402
-from tests.sync_committee.test_live_e2e_finality import (  # noqa: E402
-    CURRENT_SC_GINDEX,
-    FINALITY_GINDEX,
-    FULU_FORK_EPOCH,
-    FULU_FORK_VERSION,
-    GEN,
-    NEXT_SC_GINDEX,
-    _choose_mode_and_boxes,
-    _deploy_bench_apps,
-    _fetch_live_checkpoint_and_update,
-    _issue_donor_txn,
-    _submit_update_group,
-)
-from tests.sync_committee.conftest import SyncCommitteeLiveHarness
 
 RING_N = 8
 
@@ -67,164 +47,6 @@ RING_N = 8
 # this pass's live test does not reach -- see this file's own honest-gap
 # note near `test_g1_m8_real_direct_anchor_and_attest`).
 G_BLOCK_ROOTS_BASE_PLACEHOLDER = 69
-
-
-def _beacon_reachable() -> bool:
-    for base in beacon.BEACON_APIS:
-        try:
-            req = urllib.request.Request(
-                base.rstrip("/") + "/eth/v1/beacon/light_client/finality_update", headers=beacon.HEADERS
-            )
-            with urllib.request.urlopen(req, timeout=5) as r:
-                if r.status == 200:
-                    return True
-        except Exception:  # noqa: BLE001
-            continue
-    return False
-
-
-@pytest.fixture(scope="module")
-def beacon_available() -> bool:
-    return _beacon_reachable()
-
-
-@pytest.fixture(scope="module")
-def genesis_validators_root() -> bytes:
-    return bytes.fromhex("4b363db94e286120d76eb905340fdd4e54bfe9f06bf33ff6cf5ad27f511bfe95")
-
-
-@pytest.fixture(scope="module")
-def live_data(beacon_available):
-    if not beacon_available:
-        pytest.skip("no reachable beacon-API endpoint in the pool")
-    return _fetch_live_checkpoint_and_update()
-
-
-@pytest.fixture(scope="module")
-def compiled_m4_bench(algod_available):
-    if not algod_available:
-        pytest.skip("no dev-mode algod reachable")
-    import subprocess
-
-    bench_src = REPO_ROOT / "contracts" / "sync_committee" / "bench_app.py"
-    out_dir = Path("/tmp/m8_m4bench_out")
-    out_dir.mkdir(exist_ok=True)
-    subprocess.run([sys.executable, "-m", "puyapy", str(bench_src), "--out-dir", str(out_dir)], check=True, capture_output=True)
-
-    def compile_name(name, kind="approval"):
-        return (out_dir / f"{name}.{kind}.teal").read_text()
-
-    algod = algod_client()
-    return {
-        "callee_approval": compile_teal(algod, compile_name("DonorCallee")),
-        "callee_clear": compile_teal(algod, compile_name("DonorCallee", "clear")),
-        "issuer_approval": compile_teal(algod, compile_name("DonorIssuer")),
-        "issuer_clear": compile_teal(algod, compile_name("DonorIssuer", "clear")),
-    }
-
-
-@pytest.fixture(scope="module")
-def installed_committee(algod_available, live_data, compiled_m4_bench, genesis_validators_root):
-    """REAL M4: fresh `SyncCommitteeVerifier`, real live "fulu" fork row,
-    real bootstrap, real 64-chunk 512-member install. Identical procedure
-    to `tests/sync_committee/test_live_e2e_finality.py`'s own fixture --
-    this module needs its OWN real M4 instance (not a shared one) so that
-    tests in the two files never race on the same on-chain state."""
-    if not algod_available:
-        pytest.skip("no dev-mode algod reachable")
-    boot_args = live_data["boot_args"]
-    checkpoint_root = live_data["checkpoint_root"]
-
-    h = SyncCommitteeLiveHarness()
-    h.create(h.sender, genesis_validators_root)
-    callee_id, issuer_id = _deploy_bench_apps(h, compiled_m4_bench)
-
-    h.submit([(
-        "append_fork_row",
-        [FULU_FORK_EPOCH, FULU_FORK_VERSION, FINALITY_GINDEX, CURRENT_SC_GINDEX, NEXT_SC_GINDEX],
-        [(0, b"forks")],
-    )])
-
-    def key_box_name(gen, j):
-        return b"k:" + gen.to_bytes(8, "big") + j.to_bytes(8, "big")[7:8]
-
-    def session_box_name(gen):
-        return b"s:" + gen.to_bytes(8, "big")
-
-    def total_box_name(gen):
-        return b"a:" + gen.to_bytes(8, "big")
-
-    key_refs = [(0, key_box_name(GEN, j)) for j in range(8)]
-    session_ref = [(0, session_box_name(GEN))]
-    h.submit([
-        ("bootstrap", [boot_args.header, boot_args.committee_root, boot_args.current_sc_branch, checkpoint_root],
-         [(0, b"forks")] + key_refs[:7]),
-        ("install_open_keys", [], key_refs),
-        ("install_open_session", [], session_ref + key_refs[:7]),
-        ("noop_budget", [], session_ref),
-    ])
-
-    method = __import__("algosdk.abi", fromlist=["Method"]).Method.undictify(h.methods["install_chunk"])
-    from algosdk.atomic_transaction_composer import AccountTransactionSigner, AtomicTransactionComposer
-
-    for cursor in range(0, 512, 8):
-        chunk = boot_args.pubkey_pairs[cursor : cursor + 8]
-        compressed_blob = b"".join(c for c, _u in chunk)
-        uncompressed_blob = b"".join(u for _c, u in chunk)
-        box_j = cursor // 64
-        kb = key_box_name(GEN, box_j)
-        sb = session_box_name(GEN)
-        signer = AccountTransactionSigner(h.sk)
-        atc = AtomicTransactionComposer()
-        atc.add_transaction(_issue_donor_txn(h, issuer_id, callee_id, 40))
-        sp = h.algod.suggested_params()
-        sp.flat_fee = True
-        sp.fee = 1000
-        atc.add_method_call(
-            app_id=h.app_id, method=method, sender=h.sender, sp=sp, signer=signer,
-            method_args=[cursor, compressed_blob, uncompressed_blob], boxes=[(0, kb), (0, sb), (0, kb), (0, sb)],
-        )
-        atc.execute(h.algod, 4)
-
-    signer = AccountTransactionSigner(h.sk)
-    atc = AtomicTransactionComposer()
-    atc.add_transaction(_issue_donor_txn(h, issuer_id, callee_id, 15))
-    from algosdk.abi import Method
-    finalize_method = Method.undictify(h.methods["install_finalize"])
-    sp = h.algod.suggested_params()
-    sp.flat_fee = True
-    sp.fee = 1000
-    atc.add_method_call(
-        app_id=h.app_id, method=finalize_method, sender=h.sender, sp=sp, signer=signer,
-        method_args=[boot_args.aggregate_compressed, boot_args.aggregate_uncompressed],
-        boxes=[(0, session_box_name(GEN)), (0, total_box_name(GEN))],
-    )
-    atc.execute(h.algod, 4)
-
-    return {"h": h, "callee_id": callee_id, "issuer_id": issuer_id}
-
-
-@pytest.fixture(scope="module")
-def finalized_m4(installed_committee, live_data):
-    """Advances the real M4 instance with the SAME live `finality_update`
-    used to derive the anchor fixtures below, so M8's `anchor_direct` reads
-    a `fin_root` M4 genuinely just finalized."""
-    h = installed_committee["h"]
-    issuer_id = installed_committee["issuer_id"]
-    callee_id = installed_committee["callee_id"]
-    fu_now_args = live_data["fu_now_args"]
-    mode, box_refs, plan = _choose_mode_and_boxes(fu_now_args.sync_committee_bits, GEN)
-    # FIXED (this pass): the ad hoc `box_refs + box_refs[:4]` padding below
-    # this comment used to compensate for `_choose_mode_and_boxes` only
-    # counting distinct boxes, not their real declared byte size -- the
-    # exact root cause of the "box read budget (6144) exceeded" failure
-    # this comment used to describe as unexplained live-data fragility.
-    # `_choose_mode_and_boxes` now returns a real `plan` (relayer.group.
-    # boxes.plan_box_refs), and `_submit_update_group` sizes the real
-    # transaction count from it directly -- no hand-picked padding needed.
-    result = _submit_update_group(h, issuer_id, callee_id, fu_now_args, fu_now_args.signature, mode, box_refs, plan=plan)
-    assert result.tx_ids, "real submit_update did not commit"
-    return h
 
 
 class TestG5M8RealRingInit:
@@ -272,35 +94,17 @@ def compiled_anchor(algod_available):
     return puya_compile(REPO_ROOT / "contracts" / "state_anchor" / "anchor_app.py")
 
 
-@pytest.fixture(scope="module")
-def account(algod_available):
-    if not algod_available:
-        pytest.skip("no dev-mode algod reachable")
-    algod = algod_client()
-    kmd = kmd_client()
-    return funded_account(algod, kmd)
-
-
-@pytest.fixture(scope="module")
-def donors(algod_available, account):
-    if not algod_available:
-        pytest.skip("no dev-mode algod reachable")
-    algod = algod_client()
-    sender, sk = account
-    return deploy_donor_pair(algod, sender, sk)
-
-
 class TestG1M8RealDirectAnchor:
     """The headline proof, run against CURRENT real data (see module
     docstring for why the design doc's own pinned example is no longer
     reachable)."""
 
-    def test_g1_m8_real_direct_anchor_and_attest(self, finalized_m4, live_data, compiled_anchor, account, donors):
+    def test_g1_m8_real_direct_anchor_and_attest(self, finalized_m4, checkpoint_data, compiled_anchor, account, donors):
         h = finalized_m4  # real M4, real finalized state
         sender, sk = account
 
-        fu_args = live_data["fu_now_args"]
-        fu_now = live_data["fu_now"]
+        fu_args = checkpoint_data["fu_now_args"]
+        fu_now = checkpoint_data["fu_now"]
         finalized_json = fu_now["data"]["finalized_header"]
         beacon_fields = finalized_json["beacon"]
         payload = finalized_json["execution"]

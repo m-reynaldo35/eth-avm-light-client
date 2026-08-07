@@ -89,6 +89,12 @@ from relayer.group.donors import donor_transaction_with_signer
 from relayer.sources import beacon
 from tests.relayer.test_live_relayer import ALGOD_AVAILABLE, BEACON_AVAILABLE, _client_for, _deploy_m4
 
+# 011 §4.1: same shape as test_live_relayer.py -- every test in this file
+# is Tier C (algod + beacon), driven from eagerly-computed booleans rather
+# than fixture parameters, so the tier auto-marker cannot infer it from a
+# fixture closure. Explicit module-level pytestmark, mirroring that file.
+pytestmark = [pytest.mark.needs_algod, pytest.mark.needs_network]
+
 # Real, already-elapsed mainnet sync-committee periods (~27.3h each), both
 # well after fulu's own activation period (1607) and well before "now"
 # (~1823 at the time this pass was written) -- see module docstring for
@@ -99,7 +105,7 @@ PERIOD_P1 = PERIOD_P + 1
 
 # Two generations' worth of key-box MBR (~39.5 ALGO) must coexist on-chain
 # simultaneously right up until the rollover retires the first --
-# `tests/sync_committee/conftest.py`'s own `APP_FUNDING_MICROALGO` (45
+# `tests/sync_committee/harness.py`'s own `APP_FUNDING_MICROALGO` (45
 # ALGO) is sized for only ONE generation, so this env needs real, explicit
 # extra headroom on top of it.
 EXTRA_APP_FUNDING_MICROALGO = 25_000_000
@@ -124,8 +130,8 @@ def _add_call(h, atc, name: str, args: list, boxes=None) -> None:
 def donor_pair():
     if not ALGOD_AVAILABLE:
         pytest.skip("no dev-mode algod reachable")
-    from tests.state_anchor.conftest import algod_client, funded_account, kmd_client
-    from tests.state_anchor.conftest import deploy_donor_pair as ts_deploy_donor_pair
+    from tests.harness.chain import algod_client, funded_account, kmd_client
+    from tests.harness.deployment import deploy_donor_pair as ts_deploy_donor_pair
 
     algod_c = algod_client()
     kmd_c = kmd_client()
@@ -195,9 +201,10 @@ def env_retire(historical_period_data, donor_pair):
     assert client.retire_old_generations() == {"retired": [], "skipped_already_retired": [], "failed": []}
 
     # -- discovery: re-submit period P's OWN real update as a real
-    #    submit_update, via the client's already-existing private
-    #    `_submit_update_group` (the SAME method `test_l2` in `test_live_
-    #    relayer.py` already calls directly, for exactly this reason: to
+    #    submit_update, via the client's public `submit_update_group`
+    #    (promoted from private in M11, 011 §6.3 -- the SAME method
+    #    `test_l2` in `test_live_relayer.py` already calls directly, for
+    #    exactly this reason: to
     #    force a specific real, historical `args` tuple that `_drive_m4_
     #    update`'s own "always fetch whatever finalized a moment ago"
     #    fetch cannot express). finalized_slot(args_p) == the store's own
@@ -207,7 +214,7 @@ def env_retire(historical_period_data, donor_pair):
     #    side effect (verifier.py's module docstring, elaboration 2),
     #    which runs independently of whether finality itself advances. --
     mode, plan = m4.plan_submit_update_boxes(d["args_p"].sync_committee_bits, 1)
-    discovery_result = client._submit_update_group(1, d["args_p"], mode, plan)
+    discovery_result = client.submit_update_group(1, d["args_p"], mode, plan)
     assert discovery_result.tx_ids, "the real discovery submit_update did not commit"
     gs = client._read_global_state(h.app_id)
     assert gs[b"next_committee_root_trusted"] == d["args_p"].next_committee_root
@@ -493,7 +500,7 @@ def _discovery_resubmit(client, committee_gen: int, args, expected_next_period: 
     a FURTHER-OUT period except by a fresh discovery submission like this
     one, so each of the three cycles below needs its own."""
     mode, plan = m4.plan_submit_update_boxes(args.sync_committee_bits, committee_gen)
-    result = client._submit_update_group(committee_gen, args, mode, plan)
+    result = client.submit_update_group(committee_gen, args, mode, plan)
     assert result.tx_ids, "the real discovery submit_update did not commit"
     gs = client._read_global_state(client.config.m4_app_id)
     assert gs[b"next_committee_root_trusted"] == args.next_committee_root

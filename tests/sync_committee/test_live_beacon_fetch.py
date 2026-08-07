@@ -9,14 +9,12 @@ Deliberately does NOT touch algod or any contract -- that is a separate,
 later task (this module's own docstring / the task brief that produced it
 are explicit about this). Skipped outright if no beacon-API endpoint in the
 pool is reachable, matching this repo's existing live-tier skip convention
-(`tests/sync_committee/conftest.py`'s `algod_available`).
+(`tests/harness/env.py`'s shared `beacon_available` fixture).
 """
 
 from __future__ import annotations
 
 import time
-import urllib.error
-import urllib.request
 
 import pytest
 
@@ -28,26 +26,6 @@ from relayer.sources import beacon
 # NOT a consensus-critical constant anywhere in this module.
 MAINNET_GENESIS_TIME = 1606824023
 SECONDS_PER_SLOT = 12
-
-
-def _beacon_reachable() -> bool:
-    for base in beacon.BEACON_APIS:
-        try:
-            req = urllib.request.Request(
-                base.rstrip("/") + "/eth/v1/beacon/light_client/finality_update",
-                headers=beacon.HEADERS,
-            )
-            with urllib.request.urlopen(req, timeout=5) as r:
-                if r.status == 200:
-                    return True
-        except (urllib.error.URLError, OSError, TimeoutError):
-            continue
-    return False
-
-
-@pytest.fixture(scope="module")
-def beacon_available() -> bool:
-    return _beacon_reachable()
 
 
 def test_live_finality_update_decodes_sanely(beacon_available):

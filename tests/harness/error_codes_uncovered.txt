@@ -1,0 +1,24 @@
+# Committed baseline (docs/design/011-test-harness-ci.md §9.1, 008 §15.5
+# item 4, G9-M8). Measured this pass: 22 distinct numeric error codes exist
+# under contracts/** (N1-N17, N20-N24), of which 9 are mentioned anywhere in
+# tests/** or relayer/** (N2, N4, N5, N6, N9, N12, N13, N15, N20) -- a
+# generous upper bound (a word-boundary text match over test names,
+# docstrings and string literals, which certainly over-counts "exercised").
+# The 13 below are never mentioned anywhere. Adding a new code without a
+# test is a red build (test_coverage_discipline.py F-2); deliberately
+# deferring one is a one-line, reviewable, blame-able diff to THIS file.
+# Closing these is M8's work, not M11's (§9.1) -- M11 owns the discipline
+# that stops the list growing unnoticed, not the coverage itself.
+N1
+N3
+N7
+N8
+N10
+N11
+N14
+N16
+N17
+N21
+N22
+N23
+N24

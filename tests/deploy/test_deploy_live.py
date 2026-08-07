@@ -12,60 +12,13 @@ is monkeypatched per test via the `manifest_dir` fixture below.
 from __future__ import annotations
 
 import base64
-import urllib.error
-import urllib.request
 import uuid
 
 import pytest
 
-ALGOD_ADDRESS = "http://localhost:4051"
-KMD_ADDRESS = "http://localhost:4052"
-TOKEN = "a" * 64
+from tests.harness.env import ALGOD_ADDRESS, TOKEN
+
 REAL_GENESIS_ID = "dockernet-v1"
-
-
-def _algod_reachable() -> bool:
-    try:
-        req = urllib.request.Request(ALGOD_ADDRESS + "/v2/status", headers={"X-Algo-API-Token": TOKEN})
-        with urllib.request.urlopen(req, timeout=2) as r:
-            return r.status == 200
-    except (urllib.error.URLError, OSError):
-        return False
-
-
-@pytest.fixture(scope="session")
-def algod_available() -> bool:
-    return _algod_reachable()
-
-
-@pytest.fixture()
-def algod_client(algod_available):
-    if not algod_available:
-        pytest.skip(f"no dev-mode algod reachable at {ALGOD_ADDRESS}")
-    from algosdk.v2client import algod as algod_mod
-
-    return algod_mod.AlgodClient(TOKEN, ALGOD_ADDRESS)
-
-
-@pytest.fixture()
-def funded_account(algod_client):
-    from algosdk import kmd as kmd_mod
-
-    kmd = kmd_mod.KMDClient(TOKEN, KMD_ADDRESS)
-    wallets = kmd.list_wallets()
-    wid = next(w["id"] for w in wallets if w["name"] == "unencrypted-default-wallet")
-    handle = kmd.init_wallet_handle(wid, "")
-    try:
-        addrs = kmd.list_keys(handle)
-        best, best_bal = None, -1
-        for a in addrs:
-            bal = algod_client.account_info(a)["amount"]
-            if bal > best_bal:
-                best, best_bal = a, bal
-        sk = kmd.export_key(handle, "", best)
-        return best, sk
-    finally:
-        kmd.release_wallet_handle(handle)
 
 
 @pytest.fixture()
@@ -112,10 +65,10 @@ ACTIVATION_EPOCHS = {"deneb": 269568, "electra": 364032, "fulu": 411392}
 # ring_cursor==ring_size, fork_count correct, gov correct.
 # ---------------------------------------------------------------------------
 @pytest.fixture()
-def deployed(algod_client, funded_account, manifest_dir):
+def deployed(algod_client, account, manifest_dir):
     from deploy.diff import apply
 
-    sender, sk = funded_account
+    sender, sk = account
     genesis_id = f"test-{uuid.uuid4().hex[:12]}"
     target = _make_target(algod_client, sender, genesis_id)
     manifest = apply(target, algod_client, sender, sk, yes=True, activation_epochs=ACTIVATION_EPOCHS)
@@ -157,12 +110,12 @@ def test_d2_reapply_sends_zero_transactions(deployed, algod_client):
 # D-3 (G6-M10): kill after create, before fork rows; re-run appends exactly
 # the missing rows.
 # ---------------------------------------------------------------------------
-def test_d3_resume_appends_only_missing_fork_rows(algod_client, funded_account, manifest_dir):
+def test_d3_resume_appends_only_missing_fork_rows(algod_client, account, manifest_dir):
     from deploy.diff import apply
     from deploy.inspect import decode_global_state
     from deploy.plans import m4 as m4_plan
 
-    sender, sk = funded_account
+    sender, sk = account
     genesis_id = f"test-{uuid.uuid4().hex[:12]}"
     target = _make_target(algod_client, sender, genesis_id)
 
@@ -206,12 +159,12 @@ def test_d3_resume_appends_only_missing_fork_rows(algod_client, funded_account, 
 # ---------------------------------------------------------------------------
 # D-4: kill mid ring_init_chunk; re-run resumes at the real ring_cursor.
 # ---------------------------------------------------------------------------
-def test_d4_resume_mid_ring_init(algod_client, funded_account, manifest_dir):
+def test_d4_resume_mid_ring_init(algod_client, account, manifest_dir):
     from deploy.diff import apply
     from deploy.inspect import decode_global_state
     from deploy.plans import m8 as m8_plan
 
-    sender, sk = funded_account
+    sender, sk = account
     genesis_id = f"test-{uuid.uuid4().hex[:12]}"
     target = _make_target(algod_client, sender, genesis_id, ring_n=16)
 
@@ -270,10 +223,10 @@ def test_d5_recover_by_approval_hash(deployed, algod_client):
 # ---------------------------------------------------------------------------
 # D-6 (G7-M10): apply against the wrong genesis hash -- refused.
 # ---------------------------------------------------------------------------
-def test_d6_genesis_hash_mismatch_refused(algod_client, funded_account, manifest_dir):
+def test_d6_genesis_hash_mismatch_refused(algod_client, account, manifest_dir):
     from deploy.diff import GenesisMismatch, apply
 
-    sender, sk = funded_account
+    sender, sk = account
     target = _make_target(algod_client, sender, f"test-{uuid.uuid4().hex[:12]}")
     target.network.genesis_hash = "not-the-real-hash="
     with pytest.raises(GenesisMismatch):
@@ -316,10 +269,10 @@ def test_d9_verify_using_only_public_reads(deployed, algod_client):
 # ---------------------------------------------------------------------------
 # D-10: plan with no signer configured.
 # ---------------------------------------------------------------------------
-def test_d10_plan_needs_no_signer(algod_client, funded_account, manifest_dir):
+def test_d10_plan_needs_no_signer(algod_client, account, manifest_dir):
     from deploy.diff import plan
 
-    sender, _sk = funded_account
+    sender, _sk = account
     target = _make_target(algod_client, sender, f"test-{uuid.uuid4().hex[:12]}")
     before = algod_client.status()["last-round"]
     entries = plan(target, algod_client)
@@ -333,13 +286,13 @@ def test_d10_plan_needs_no_signer(algod_client, funded_account, manifest_dir):
 # D-11: two-stage funding, race path -- fund the wrong predicted id
 # deliberately; apply detects the mismatch and refuses to continue.
 # ---------------------------------------------------------------------------
-def test_d11_create_raced_detected_and_refused(algod_client, funded_account):
+def test_d11_create_raced_detected_and_refused(algod_client, account):
     from algosdk import logic
 
     from deploy import create as create_mod
     from deploy.plans import m4 as m4_plan
 
-    sender, sk = funded_account
+    sender, sk = account
     compiled = m4_plan.compile_m4()
     from algosdk import transaction
     from algosdk.abi import Method

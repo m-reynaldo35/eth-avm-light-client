@@ -1,0 +1,287 @@
+{
+  "files": {
+    "tests/bls/test_aggregate.py": {
+      "needs_algod": 8,
+      "needs_network": 0,
+      "offline": 11
+    },
+    "tests/bls/test_codec.py": {
+      "needs_algod": 5,
+      "needs_network": 0,
+      "offline": 10
+    },
+    "tests/bls/test_hash_to_curve.py": {
+      "needs_algod": 5,
+      "needs_network": 0,
+      "offline": 6
+    },
+    "tests/bls/test_pairing.py": {
+      "needs_algod": 6,
+      "needs_network": 0,
+      "offline": 0
+    },
+    "tests/bls/test_trust_boundary.py": {
+      "needs_algod": 1,
+      "needs_network": 0,
+      "offline": 0
+    },
+    "tests/deploy/test_deploy_live.py": {
+      "needs_algod": 10,
+      "needs_network": 0,
+      "offline": 1
+    },
+    "tests/deploy/test_end_to_end.py": {
+      "needs_algod": 1,
+      "needs_network": 1,
+      "offline": 0
+    },
+    "tests/deploy/test_forks_gindex.py": {
+      "needs_algod": 0,
+      "needs_network": 1,
+      "offline": 9
+    },
+    "tests/deploy/test_schema.py": {
+      "needs_algod": 0,
+      "needs_network": 0,
+      "offline": 13
+    },
+    "tests/deploy/test_security_matrix.py": {
+      "needs_algod": 3,
+      "needs_network": 0,
+      "offline": 7
+    },
+    "tests/harness/test_compile_gate.py": {
+      "needs_algod": 0,
+      "needs_network": 0,
+      "offline": 5
+    },
+    "tests/harness/test_coverage_discipline.py": {
+      "needs_algod": 0,
+      "needs_network": 0,
+      "offline": 5
+    },
+    "tests/harness/test_harness_layering.py": {
+      "needs_algod": 0,
+      "needs_network": 0,
+      "offline": 7
+    },
+    "tests/harness/test_quarantine.py": {
+      "needs_algod": 0,
+      "needs_network": 0,
+      "offline": 14
+    },
+    "tests/harness/test_tiers.py": {
+      "needs_algod": 0,
+      "needs_network": 0,
+      "offline": 7
+    },
+    "tests/relayer/test_box_budget_model.py": {
+      "needs_algod": 3,
+      "needs_network": 0,
+      "offline": 0
+    },
+    "tests/relayer/test_live_relayer.py": {
+      "needs_algod": 7,
+      "needs_network": 7,
+      "offline": 0
+    },
+    "tests/relayer/test_plan_boxes.py": {
+      "needs_algod": 0,
+      "needs_network": 0,
+      "offline": 24
+    },
+    "tests/relayer/test_real_fixtures.py": {
+      "needs_algod": 0,
+      "needs_network": 0,
+      "offline": 19
+    },
+    "tests/relayer/test_retire_live.py": {
+      "needs_algod": 4,
+      "needs_network": 4,
+      "offline": 0
+    },
+    "tests/relayer/test_security.py": {
+      "needs_algod": 0,
+      "needs_network": 0,
+      "offline": 13
+    },
+    "tests/relayer/test_segmentation.py": {
+      "needs_algod": 0,
+      "needs_network": 0,
+      "offline": 5
+    },
+    "tests/ssz/test_budget.py": {
+      "needs_algod": 7,
+      "needs_network": 0,
+      "offline": 0
+    },
+    "tests/ssz/test_merkle.py": {
+      "needs_algod": 0,
+      "needs_network": 0,
+      "offline": 129
+    },
+    "tests/ssz/test_merkleize.py": {
+      "needs_algod": 0,
+      "needs_network": 0,
+      "offline": 29
+    },
+    "tests/state_anchor/test_core.py": {
+      "needs_algod": 14,
+      "needs_network": 0,
+      "offline": 0
+    },
+    "tests/state_anchor/test_forks.py": {
+      "needs_algod": 3,
+      "needs_network": 1,
+      "offline": 0
+    },
+    "tests/state_anchor/test_live_e2e.py": {
+      "needs_algod": 2,
+      "needs_network": 1,
+      "offline": 0
+    },
+    "tests/state_anchor/test_live_historical.py": {
+      "live_heavy": 2,
+      "needs_algod": 0,
+      "needs_network": 0,
+      "offline": 0
+    },
+    "tests/sync_committee/test_bitfield.py": {
+      "needs_algod": 0,
+      "needs_network": 0,
+      "offline": 6
+    },
+    "tests/sync_committee/test_install_live.py": {
+      "needs_algod": 4,
+      "needs_network": 0,
+      "offline": 0
+    },
+    "tests/sync_committee/test_live_beacon_fetch.py": {
+      "needs_algod": 0,
+      "needs_network": 3,
+      "offline": 0
+    },
+    "tests/sync_committee/test_live_e2e_finality.py": {
+      "needs_algod": 2,
+      "needs_network": 2,
+      "offline": 0
+    },
+    "tests/sync_committee/test_signing_root.py": {
+      "needs_algod": 0,
+      "needs_network": 0,
+      "offline": 6
+    },
+    "tests/unit/test_mpt6_account_body.py": {
+      "needs_algod": 0,
+      "needs_network": 0,
+      "offline": 14
+    },
+    "tests/unit/test_mpt6_bridge.py": {
+      "needs_algod": 0,
+      "needs_network": 0,
+      "offline": 8
+    },
+    "tests/unit/test_mpt6_composite_real.py": {
+      "needs_algod": 0,
+      "needs_network": 0,
+      "offline": 2
+    },
+    "tests/unit/test_mpt6_edge.py": {
+      "needs_algod": 0,
+      "needs_network": 0,
+      "offline": 8
+    },
+    "tests/unit/test_mpt6_handoff.py": {
+      "needs_algod": 0,
+      "needs_network": 0,
+      "offline": 12
+    },
+    "tests/unit/test_mpt6_security.py": {
+      "needs_algod": 0,
+      "needs_network": 0,
+      "offline": 5
+    },
+    "tests/unit/test_mpt6_structural.py": {
+      "needs_algod": 0,
+      "needs_network": 0,
+      "offline": 4
+    },
+    "tests/unit/test_mpt7_receipt_decode.py": {
+      "needs_algod": 0,
+      "needs_network": 0,
+      "offline": 4
+    },
+    "tests/unit/test_mpt_derived.py": {
+      "needs_algod": 0,
+      "needs_network": 0,
+      "offline": 10
+    },
+    "tests/unit/test_mpt_descend.py": {
+      "needs_algod": 0,
+      "needs_network": 0,
+      "offline": 6
+    },
+    "tests/unit/test_mpt_differential.py": {
+      "needs_algod": 0,
+      "needs_network": 0,
+      "offline": 5
+    },
+    "tests/unit/test_mpt_edge.py": {
+      "needs_algod": 0,
+      "needs_network": 0,
+      "offline": 10
+    },
+    "tests/unit/test_mpt_handoff.py": {
+      "needs_algod": 0,
+      "needs_network": 0,
+      "offline": 7
+    },
+    "tests/unit/test_mpt_keys.py": {
+      "needs_algod": 0,
+      "needs_network": 0,
+      "offline": 18
+    },
+    "tests/unit/test_mpt_real_walks.py": {
+      "needs_algod": 0,
+      "needs_network": 0,
+      "offline": 6
+    },
+    "tests/unit/test_mpt_structural.py": {
+      "needs_algod": 0,
+      "needs_network": 0,
+      "offline": 4
+    },
+    "tests/unit/test_rlp_core.py": {
+      "needs_algod": 0,
+      "needs_network": 0,
+      "offline": 12
+    },
+    "tests/unit/test_rlp_differential.py": {
+      "needs_algod": 0,
+      "needs_network": 0,
+      "offline": 10
+    },
+    "tests/unit/test_rlp_eip2718.py": {
+      "needs_algod": 0,
+      "needs_network": 0,
+      "offline": 9
+    },
+    "tests/unit/test_rlp_negative.py": {
+      "needs_algod": 0,
+      "needs_network": 0,
+      "offline": 9
+    },
+    "tests/unit/test_rlp_nibbles.py": {
+      "needs_algod": 0,
+      "needs_network": 0,
+      "offline": 11
+    }
+  },
+  "generated_by": "pytest --write-tier-manifest",
+  "totals": {
+    "collected": 592,
+    "live": 90,
+    "live_heavy": 2,
+    "offline": 500
+  }
+}

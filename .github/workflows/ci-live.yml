@@ -1,22 +1,115 @@
 name: CI (live, dev-mode algod + public RPC)
 
+# docs/design/011-test-harness-ci.md §8: the real body, replacing the
+# scaffold-commit placeholder `echo`. `ci-live` has a Docker daemon and
+# outbound network access -- it is workflow_dispatch + schedule ONLY.
+# NEVER add `pull_request` or `pull_request_target` here, and NEVER add a
+# repository secret without re-reading §11 first: this workflow's whole
+# security story rests on "public runner, no secrets, throwaway dev-mode
+# node -- nothing to steal" (§8.4/§11 rule 3/rule 4).
+
 on:
   workflow_dispatch:
+    inputs:
+      include_heavy:
+        description: "also run the >1 GB BeaconState (live_heavy) tier"
+        type: boolean
+        default: false
+      pytest_args:
+        description: "extra args, e.g. a single file/-k expression"
+        type: string
+        default: ""
   schedule:
-    - cron: "0 6 * * *"
+    - cron: "0 6 * * *"      # nightly: live + contracts-live
+    - cron: "0 4 * * 0"      # Sunday: adds live-heavy
+
+permissions:
+  contents: read
+
+env:
+  # Pinned by DIGEST, never `:latest` -- every opcode budget and protocol
+  # cap this project has ever measured (MAX_BOX_REFS_PER_TXN=8, the 2,048B
+  # pooled per-ref budget, ...) was measured against this specific
+  # go-algorand build (§8.1). Confirmed live this pass: 4.7.4, commit
+  # 91cbddcd, rel/stable.
+  ALGOD_IMAGE: algorand/algod@sha256:9c667451da575abcf325c631bd24f845f051122e689628eba1c83daa3ebd3cbc
 
 jobs:
-  test:
+  live:
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
+        with: {python-version: "3.13", cache: pip}
+      - run: python -m pip install --upgrade pip && pip install -e ".[test,contracts]"
+      - name: Bring up dev-mode algod
+        run: .github/scripts/algod_up.sh
+      - name: Record the algod build under test
+        run: .github/scripts/algod_versions.sh | tee algod-versions.json
+      - name: Live tier
+        # --live: select everything except live_heavy, apply the
+        # quarantine list, enable the live_variance retry policy.
+        run: |
+          python -m pytest tests/ -q --live --live-retries=2 \
+            --junitxml=live.xml ${{ inputs.pytest_args }}
+      - name: Bare-contract assembled sizes vs the committed cache
+        if: always()
+        run: python -m tests.harness.compile_check --diff-assembled
+      - name: Report (build, participation/k, skips, retries, quarantine, budget)
+        if: always()
+        run: python -m tests.harness.report live.xml >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        if: always()
         with:
-          python-version: "3.12"
-      # NOTE: placeholder. Real job brings up a dev-mode algod container
-      # (see tests/fixtures/spike-reference/README.md for the exact recipe)
-      # and validates against public Ethereum RPC, mirroring the spike's
-      # real-data validation style. Must pass manually before any module is
-      # marked "Released" in ROADMAP.md.
-      - name: Placeholder (no modules implemented yet)
-        run: echo "ci-live skeleton -- populate once M11 design lands"
+          name: live-results
+          path: |
+            live.xml
+            algod-versions.json
+      - name: Tear down
+        if: always()
+        run: docker rm -f ci_algod || true
+
+  live-heavy:
+    if: github.event.schedule == '0 4 * * 0' || inputs.include_heavy
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.13", cache: pip}
+      - run: python -m pip install --upgrade pip && pip install -e ".[test,contracts]"
+      - run: .github/scripts/algod_up.sh
+      - name: HISTORICAL-mode tier (>1 GB real BeaconState, multi-GB RSS)
+        run: |
+          /usr/bin/time -v python -m pytest tests/ -q --live -m live_heavy \
+            --live-retries=2 --junitxml=live-heavy.xml 2> rss.txt || (cat rss.txt; exit 1)
+          grep "Maximum resident set size" rss.txt >> "$GITHUB_STEP_SUMMARY" || true
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: live-heavy-results
+          path: |
+            live-heavy.xml
+            rss.txt
+      - name: Tear down
+        if: always()
+        run: docker rm -f ci_algod || true
+
+  contracts-live:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.13", cache: pip}
+      - run: python -m pip install --upgrade pip && pip install -e ".[test,contracts]"
+      - run: .github/scripts/algod_up.sh
+      - name: Bare-contract assembled sizes/sha256 vs the committed cache
+        # §3.5's one honest network-dependent half: puyapy emits no ARC-56
+        # for a non-ARC4Contract, so its assembled byte length can only be
+        # learned via a real /v2/teal/compile round trip.
+        run: python -m tests.harness.compile_check --diff-assembled
+      - name: Tear down
+        if: always()
+        run: docker rm -f ci_algod || true

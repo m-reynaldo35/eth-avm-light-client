@@ -13,40 +13,11 @@ apply` instead of a hand-rolled test harness.
 """
 from __future__ import annotations
 
-import urllib.error
-import urllib.request
 import uuid
 
 import pytest
 
-ALGOD_ADDRESS = "http://localhost:4051"
-TOKEN = "a" * 64
-
-
-def _algod_reachable() -> bool:
-    try:
-        req = urllib.request.Request(ALGOD_ADDRESS + "/v2/status", headers={"X-Algo-API-Token": TOKEN})
-        with urllib.request.urlopen(req, timeout=2) as r:
-            return r.status == 200
-    except (urllib.error.URLError, OSError):
-        return False
-
-
-def _beacon_reachable() -> bool:
-    from relayer.sources import beacon
-
-    for base in beacon.BEACON_APIS:
-        try:
-            req = urllib.request.Request(
-                base.rstrip("/") + "/eth/v1/beacon/light_client/finality_update", headers=beacon.HEADERS
-            )
-            with urllib.request.urlopen(req, timeout=5) as r:
-                if r.status == 200:
-                    return True
-        except Exception:  # noqa: BLE001
-            continue
-    return False
-
+from tests.harness.env import ALGOD_ADDRESS, TOKEN, _algod_reachable, _beacon_reachable
 
 ALGOD_AVAILABLE = _algod_reachable()
 BEACON_AVAILABLE = _beacon_reachable()
@@ -54,6 +25,12 @@ GENESIS_VALIDATORS_ROOT_HEX = "4b363db94e286120d76eb905340fdd4e54bfe9f06bf33ff6c
 ACTIVATION_EPOCHS = {"deneb": 269568, "electra": 364032, "fulu": 411392}
 
 
+# 011 §4.1: skipif-at-import-time case with no fixture to infer from --
+# explicit needs_algod/needs_network alongside the skipif, so --offline
+# deselects this test rather than letting it run and skip (which
+# --forbid-skips would then treat as a build failure).
+@pytest.mark.needs_algod
+@pytest.mark.needs_network
 @pytest.mark.skipif(not ALGOD_AVAILABLE, reason="no dev-mode algod reachable")
 @pytest.mark.skipif(not BEACON_AVAILABLE, reason="no reachable beacon-API endpoint in the pool")
 def test_e1_g1_m10_manifest_driven_deploy_feeds_m9_end_to_end(tmp_path, monkeypatch):

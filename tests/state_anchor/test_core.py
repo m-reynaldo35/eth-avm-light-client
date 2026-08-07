@@ -10,49 +10,14 @@ from __future__ import annotations
 
 import pytest
 
+from tests.harness.chain import algod_client
+from tests.harness.deployment import compile_teal, patched_repo_copy, puya_compile
 from tests.state_anchor import synth
-from tests.state_anchor.conftest import (
-    REPO_ROOT,
-    Arc4Harness,
-    algod_client,
-    compile_teal,
-    deploy_donor_pair,
-    funded_account,
-    kmd_client,
-    patched_repo_copy,
-    puya_compile,
-)
+from tests.state_anchor.harness import Arc4Harness
 
 RING_N = 8
 FIN_SLOT = 2_000_032  # multiple of 32 (epoch boundary) for convenience
 EPOCH = FIN_SLOT // 32
-
-
-@pytest.fixture(scope="module")
-def compiled(algod_available, anchor_src, bench_src):
-    if not algod_available:
-        pytest.skip("no dev-mode algod reachable")
-    anchor_contracts = puya_compile(anchor_src)
-    bench_contracts = puya_compile(bench_src)
-    return anchor_contracts, bench_contracts
-
-
-@pytest.fixture(scope="module")
-def account(algod_available):
-    if not algod_available:
-        pytest.skip("no dev-mode algod reachable")
-    algod = algod_client()
-    kmd = kmd_client()
-    return funded_account(algod, kmd)
-
-
-@pytest.fixture(scope="module")
-def donors(algod_available, account):
-    if not algod_available:
-        pytest.skip("no dev-mode algod reachable")
-    algod = algod_client()
-    sender, sk = account
-    return deploy_donor_pair(algod, sender, sk)
 
 
 @pytest.fixture()

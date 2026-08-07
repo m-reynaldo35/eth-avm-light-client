@@ -174,7 +174,7 @@ def validated_only_session(algod_available):
     to prove the happy path works."""
     if not algod_available:
         pytest.skip("no dev-mode algod reachable")
-    from tests.sync_committee.conftest import SyncCommitteeLiveHarness
+    from tests.sync_committee.harness import SyncCommitteeLiveHarness
 
     h = SyncCommitteeLiveHarness()
     h.create(h.sender, b"\x00" * 32)

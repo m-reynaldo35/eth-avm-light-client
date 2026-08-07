@@ -6,7 +6,13 @@ build-backend = "setuptools.build_meta"
 name = "eth-avm-relayer"
 version = "0.1.0"
 description = "M9: off-chain relayer/client for the ETH-AVM light client project (docs/design/009-relayer-client.md)."
-requires-python = ">=3.10"
+# Raised from ">=3.10" (011 §7.3/§16 gap 7/§18 item 4): >=3.10 was NEVER run
+# by CI (both workflows were scaffold placeholders, see docs/design/
+# 011-test-harness-ci.md §0) and this pass measures every real number in
+# this repo on 3.13.3. >=3.12 is the honest floor: it is what `ci-offline`'s
+# matrix (3.12, 3.13) actually runs, and `tests/harness/quarantine.py` needs
+# stdlib `tomllib` (3.11+). MUST NOT ship a floor CI does not run (§18 item 4).
+requires-python = ">=3.12"
 dependencies = [
     "py-algorand-sdk",
     "rlp",
@@ -39,6 +45,41 @@ dependencies = [
 # need from one file.
 [tool.setuptools]
 packages = ["relayer", "relayer.sources", "relayer.codec", "relayer.ssz", "relayer.proofs", "relayer.group", "relayer.drivers"]
+
+# M11 (docs/design/011-test-harness-ci.md §7.2/§18 item 17): the test suite's
+# dependencies, never declared anywhere before this pass -- `pip install -e .`
+# alone did not get you a runnable suite. `algorand-python`/
+# `algorand-python-testing` are pinned EXACTLY, not floated: `algopy_testing`
+# is an emulator, and 174 of the 462 offline tests are assertions about
+# emulated AVM semantics, so a minor-version drift changes what "passing"
+# means. `puyapy` is its own extra (`contracts`), pinned exactly for the same
+# reason and a stronger one -- it is the compiler whose output the
+# compile-and-diff gate (§3.5) diffs byte-for-byte, and
+# `deploy/schema/_compiled/*.compiled.json` records "puyapy_version": "5.9.0"
+# in the artifact itself. Named `contracts`, not folded into `test`, because
+# 007 §14.6 records a real trap: `pip install puya` fetches a DIFFERENT,
+# incompatible package -- keeping the extra separate and precisely pinned is
+# what stops that trap from being rediscovered.
+[project.optional-dependencies]
+test = [
+    "pytest>=8.3",
+    "algorand-python==3.5.0",
+    "algorand-python-testing==1.1.0",
+    "remerkleable==0.1.28",
+    "trie>=3.1",
+    "PyYAML>=6",
+]
+contracts = ["puyapy==5.9.0"]
+
+# §7.2: `--strict-markers` so a typo'd marker is a collection error, not a
+# silently never-selected test (T-7). `-p tests.harness.tiers -p
+# tests.harness.variance` registers the tier/socket-guard/manifest plugin
+# and the live_variance retry-policy plugin on every invocation, so no test
+# command needs to remember `-p` flags by hand.
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+norecursedirs = ["tests/fixtures/spike-reference"]
+addopts = "--strict-markers -p tests.harness.tiers -p tests.harness.variance"
 
 # Real mainnet deployment (2026-08-07): service/x402_endpoint/main.py,
 # resolved as service.x402_endpoint.main:app -- requires service/__init__.py

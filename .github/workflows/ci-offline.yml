@@ -1,20 +1,89 @@
 name: CI (offline, pinned fixtures)
 
+# docs/design/011-test-harness-ci.md §7: the real body, replacing the
+# scaffold-commit placeholder `echo` that ran, unmodified, on every one of
+# this workflow's 13 historical runs (§0). `pull_request` matters
+# independently of `push`: measured at design time, zero of those 13 runs
+# were `pull_request` events, because this project has never opened a PR --
+# a workflow that only ran on PRs would, today, run never.
+
 on:
   push:
     branches: [main]
   pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: offline-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
-  test:
+  tests:
+    name: offline tier (py${{ matrix.python }})
     runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        # 3.13: the interpreter every measured number in this repo came
+        # from. 3.12: the other leg of the declared >=3.12 floor (§7.3,
+        # §18 item 4 -- raised from the never-tested ">=3.10" this repo
+        # shipped with since day one).
+        python: ["3.12", "3.13"]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
-      # NOTE: placeholder until M11 (test harness) design lands and defines
-      # the real dependency/test-runner setup. This workflow intentionally
-      # has no docker/live-RPC dependency -- see ARCHITECTURE.md.
-      - name: Placeholder (no modules implemented yet)
-        run: echo "ci-offline skeleton -- populate once M1+ lands"
+          python-version: ${{ matrix.python }}
+          cache: pip
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[test]"
+      - name: Offline tier
+        # --offline: deselect needs_algod/needs_network/live_heavy, install
+        # the socket guard, forbid skips among what remains (§4.2/§4.4).
+        # --check-tier-manifest: fail on any drift from the committed
+        # tests/harness/tiers.json, including the absolute floor (§4.3).
+        # The proxy vars are a second, out-of-process line of defence for
+        # anything that reaches the network without going through
+        # socket.socket.connect (e.g. a subprocess).
+        env:
+          http_proxy: http://127.0.0.1:9
+          https_proxy: http://127.0.0.1:9
+          no_proxy: ""
+        run: |
+          python -m pytest tests/ -q --offline --check-tier-manifest \
+            --junitxml=offline-py${{ matrix.python }}.xml
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: offline-results-py${{ matrix.python }}
+          path: offline-py${{ matrix.python }}.xml
+
+  contracts:
+    name: contracts compile + artifact diff
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[test,contracts]"
+      - name: Every contract entry point compiles (pinned puyapy==5.9.0)
+        run: python -m tests.harness.compile_check --compile-all
+      - name: Committed ARC-56 + TEAL artifacts reproduce byte-identically
+        run: python -m tests.harness.compile_check --diff-artifacts
+      - name: Box/state schema regenerates byte-identically (G3-M10)
+        # NOTE: `python -m deploy`, NOT `python -m deploy.cli` -- the
+        # latter has no __main__ guard and silently no-ops, exiting 0
+        # without checking anything (a real bug found and fixed this pass).
+        run: python -m deploy schema --check

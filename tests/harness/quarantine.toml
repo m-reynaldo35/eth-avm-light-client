@@ -1,0 +1,25 @@
+# Committed, dated, expiring exclusion list (docs/design/
+# 011-test-harness-ci.md §5.7). Replaces the tribal-knowledge `--deselect`
+# convention this repo used before M11 -- three prior ROADMAP rows (M8, M9,
+# M10) document a human carrying "deselect test_live_e2e_finality.py" in
+# their head across sessions. A hand-typed `--deselect` on the command line
+# is NOT a quarantine (§5.7's own rule): every real exclusion must be an
+# entry here, with all five fields, checked by `tests/harness/
+# test_quarantine.py` (Suite Q) and enforced past its own `expires` date.
+#
+# `expires` is capped at 90 days from `opened` (§5.7/Q-3) -- NOT open-ended,
+# so the decision comes back to a human on a real date.
+
+[[test]]
+nodeid  = "tests/relayer/test_live_relayer.py::test_l2_submit_update_all_8_key_boxes_g1_m9"
+reason  = """G1-M9: real, measured, structural -- at real live participation the ONLY mode \
+touching all 8 key boxes costs 210,381-211,502 opcodes (near-full-participation DIRECT), \
+more than the shared 256-inner-call donor ceiling can EVER supply (~177,392 max) regardless \
+of donor count. Needs a real day with moderate, spread-out absenteeism so COMPLEMENT mode \
+(the cheap one) is also the one touching all 8 boxes (011 §5.5/§15.4, 009 §15.4). The test \
+already self-skips with these exact numbers when the window is not open; this entry is the \
+formal, dated record that 009's own gate (G1-M9) cannot be satisfied on demand, replacing \
+the ROADMAP-prose tribal knowledge this design doc's §5.7 was written to end."""
+opened  = "2026-08-06"
+expires = "2026-11-04"
+owner   = "ROADMAP.md M9 row"

@@ -943,13 +943,22 @@ works this way today (`rlp_scan(accountProof[7], 34)`).
 
 ### 9.2 Deferred, with named owners
 
-- **O-1 (M11)** — early-exit `rlp_scan_upto(data, start, want)`. Cheaper on
-  average (~145 vs ~250 for uniform *i*) but reintroduces ~6× index-dependence
-  and a second code path against a tight program-size budget. Revisit only if
-  G1 fails or if profiling of a full M6 composition says so.
-- **O-2 (M11)** — table-free "capture the two spans the caller asked for"
-  fusion, saving the ~51 budget of table writes on branch nodes at the cost of
-  generality. First thing to try if G1 fails.
+- **O-1 (CLOSED, shipped by M2 itself, §16 — not M11's)** — early-exit
+  `rlp_scan_upto(data, start, want)`. Cheaper on average (~145 vs ~250 for
+  uniform *i*) but reintroduces ~6× index-dependence and a second code path
+  against a tight program-size budget. Revisit only if G1 fails or if
+  profiling of a full M6 composition says so. **Correction (011 §15.3/§18
+  item 20): the original "(M11)" owner tag was stale.** `rlp_scan_upto` was
+  shipped in this same document's own §16 (002 rev), which measures G6 at
+  2,566 total budget using it — M11 (docs/design/011-test-harness-ci.md) is
+  CI/harness plumbing and never touched RLP decoding; it only corrects this
+  tag during its own inherited-questions audit (§15.3).
+- **O-2 (CLOSED, shipped by M2 itself, §16 — not M11's)** — table-free
+  "capture the two spans the caller asked for" fusion, saving the ~51 budget
+  of table writes on branch nodes at the cost of generality. First thing to
+  try if G1 fails. **Correction (011 §15.3/§18 item 20): the original
+  "(M11)" owner tag was stale**, for the same reason as O-1 — `rlp_scan2` is
+  the same §16 shipment.
 - **O-3 (M7)** — the >4096 B receipt leaf. Out of scope here; per `ROADMAP.md`
   it may force a revision of M2, and §4.3 defines exactly which layer that
   revision touches (byte-fetch only).

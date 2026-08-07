@@ -6,7 +6,7 @@ Two real methodology corrections made while building this suite, recorded
 here because both would otherwise silently invalidate the measurement:
 
 1. **`allow_unnamed_resources=True` defeats the whole experiment.**
-   `tests/sync_committee/conftest.py::SyncCommitteeLiveHarness.call_group`
+   `tests/sync_committee/harness.py::SyncCommitteeLiveHarness.call_group`
    hardcodes it (needed for OTHER tests' convenience), and algod will
    silently auto-resolve/grant box access beyond what a transaction
    actually declares when it is set -- exactly what design doc §7.7 warns
@@ -35,7 +35,7 @@ from algosdk.atomic_transaction_composer import AccountTransactionSigner, Atomic
 from algosdk.v2client.models import SimulateRequest, SimulateRequestTransactionGroup
 from py_ecc.bls12_381 import G1, multiply
 
-from tests.sync_committee.conftest import SyncCommitteeLiveHarness
+from tests.sync_committee.harness import SyncCommitteeLiveHarness
 from tests.sync_committee.test_install_live import (
     CURRENT_SYNC_COMMITTEE_GINDEX,
     FINALITY_GINDEX,
@@ -62,15 +62,8 @@ def _box_budget_failure(failure: str) -> bool:
 
 
 @pytest.fixture()
-def algod_available_bx():
-    from tests.sync_committee.conftest import _algod_reachable
-
-    return _algod_reachable()
-
-
-@pytest.fixture()
-def fresh_harness(algod_available_bx):
-    if not algod_available_bx:
+def fresh_harness(algod_available):
+    if not algod_available:
         pytest.skip("no dev-mode algod reachable")
     return SyncCommitteeLiveHarness()
 

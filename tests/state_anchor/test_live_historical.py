@@ -15,87 +15,27 @@ sibling of that file's DIRECT-mode headline proof.
 **Part A -- the real `block_roots` branch (previously missing).** Building
 this required a full real Fulu `BeaconState` hash_tree_root, computed
 field-by-field in `tests/state_anchor/real_beacon_state.py` (see that
-module's own extensive docstring for the derivation discipline: three-way
-field-count/gindex re-derivation, a hand-rolled-but-`remerkleable`-validated
-merkleization algorithm, and the real numbers this pass measured). Real,
-confirmed results from this pass (2026-08-06):
+module's own extensive docstring for the derivation discipline). Real,
+confirmed results from this pass (2026-08-06): real Fulu `BeaconState`
+field count 38 (Electra's 37 + `proposer_lookahead`, EIP-7917) still rounds
+up to 64 leaves (depth 6) -> `g_block_roots_base = 69`, identical to
+`test_live_e2e.py`'s own placeholder -- shown correct for Fulu here, not
+merely assumed.
 
-  - Real current finalized slot at build time: 14,933,056 (epoch 466,658 --
-    Fulu, `FULU_FORK_EPOCH = 411,392`, has been active for tens of thousands
-    of epochs; this file always re-fetches "current" at test-run time, this
-    number will already be stale by the time anyone re-runs it, which is
-    exactly the point -- see `historical_fixture` below).
-  - Real Fulu `BeaconState` field count: **38** (Electra's 37, per
-    `tests/state_anchor/test_forks.py`'s own count, plus exactly one new
-    field, `proposer_lookahead`, EIP-7917 -- confirmed by fetching the real
-    `specs/fulu/beacon-chain.md` source directly, AND cross-checked against
-    the real fetched state's own `len(data.keys())`). 38 still rounds up to
-    64 leaves (depth 6, same as Electra's 37) -> **`g_block_roots_base =
-    69`, IDENTICAL to `test_live_e2e.py`'s own
-    `G_BLOCK_ROOTS_BASE_PLACEHOLDER`** -- that placeholder is now SHOWN
-    correct for Fulu, not merely assumed (see `real_beacon_state.py`'s
-    module docstring for the full derivation).
-  - The full real Fulu `BeaconState` htr -- including all ~2.33M REAL
-    mainnet validators, balances, and participation entries, both real
-    sync committees, the real `latest_execution_payload_header`, etc. --
-    was computed in ~24s wall-clock (pure Python, no `remerkleable` View
-    construction at scale; see that module's docstring for why) and matched
-    the real beacon node's own reported `state_root` for that slot
-    BYTE-FOR-BYTE on the first attempt that had all 38 fields' packing
-    rules correct (earlier attempts during development mismatched before
-    the `BeaconBlockBody`/`ExecutionPayload` full-list handling below was
-    added -- see git history of this pass's own scratch work, not
-    preserved in this file, only the final working version is committed
-    here).
-  - A REAL depth-4 `BeaconBlockBody` -> `execution_payload` branch for an
-    arbitrary HISTORICAL slot (T_SLOT) turned out to need MORE than the
-    task brief's own suggested `GET /eth/v2/beacon/blocks/{T_SLOT}` call
-    alone: that endpoint does NOT carry a precomputed `execution_branch`
-    the way a light-client `finality_update`/`bootstrap` response does (only
-    DIRECT mode gets that for free). Tried, in order: (1)
-    `GET /eth/v1/beacon/light_client/bootstrap/{T_SLOT's real header root}`
-    -- REAL, confirmed 404 on both reachable Nimbus endpoints,
-    `{"code":404,"message":"LC bootstrap unavailable"}` (bootstrap only
-    serves a small set of retained checkpoints, not an arbitrary historical
-    block root); (2) therefore this file computes the real depth-4 fold
-    itself, from the block's own real 13 `BeaconBlockBody` fields (Electra's
-    `execution_requests` addition included; Fulu does not modify
-    `BeaconBlockBody`, confirmed against the real fetched spec source).
-    T_SLOT's real block (2026-08-06) had every list field empty except
-    `attestations` (4 real entries, real `Bitlist`-packed `aggregation_bits`
-    decoded from their real SSZ delimiter-bit encoding) and
-    `blob_kzg_commitments` (8 real entries) -- both handled for real, not
-    assumed empty. This depth-4 branch, concatenated with the real depth-5
-    `ExecutionPayload` branch (`real_beacon_state.build_full_execution_payload_tree`,
-    needed because a plain block-endpoint response's `execution_payload`
-    carries full `transactions`/`withdrawals` LISTS rather than the
-    precomputed roots a `LightClientHeader`'s `execution` field already
-    gives DIRECT mode), gave the real composed depth-9 branches
-    `fold_execution_fields` needs -- independently cross-checked against
-    the real header's own `body_root` before being trusted (see
-    `historical_fixture` below).
-
-**Part B -- the real on-chain `anchor_historical` call.** Mirrors
-`test_live_e2e.py`'s `TestG1M8RealDirectAnchor` fixture chain
-(`installed_committee`/`finalized_m4`/`submit_with_donor`) against the SAME
-live checkpoint Part A's fixture is built from -- this file keeps its OWN
-copies of those fixtures (not imported from `test_live_e2e.py`) for the
-same reason that file gives for keeping its own copies of
-`test_live_e2e_finality.py`'s: two live-chain test files must never race on
-shared on-chain state.
+**Part B -- the real on-chain `anchor_historical` call.** M11 rebasing
+(docs/design/011-test-harness-ci.md §6.3): `installed_committee`/
+`finalized_m4` are now `tests.harness.m4`'s shared fixtures, driven through
+`EthAvmClient.sync()` -- this file no longer keeps its own hand-rolled copy
+of the bootstrap/box-open/install_chunk sequence, and the
+`_choose_mode_and_boxes` import plus its `(box_refs + box_refs)[:16]`
+padding workaround are gone with it (§5.3/§5.4).
 
 **Part C -- the combined M7+M8 chain.** Once Part B's `anchor_historical`
 commits, the anchor genuinely holds T_SLOT's block's real `receipts_root`.
-This suite fetches a REAL transaction from that same block (via
-`service/x402_endpoint/eth_rpc.py`/`trie_proof.py`, exactly as
-`test_live_e2e.py`'s own docstring anticipated this task would), and
-verifies its real inclusion proof through `AnchorReceiptProbe`
-(`contracts/state_anchor/bench_app.py`) -- M7's own unmodified receipt-walk
-subroutines PLUS M8's `mpt7_result_against_anchor`
-(`contracts/state_anchor/handoff.py`) -- against the SAME on-chain anchor
-from Part B, not a freshly-trusted root. `contracts/receipt/*.py` and
-`contracts/state_anchor/anchor_app.py`/`handoff.py` are read-only imports
-here, never modified (same scope boundary as the rest of M8's own pass).
+This suite fetches a REAL transaction from that same block and verifies its
+real inclusion proof through `AnchorReceiptProbe`
+(`contracts/state_anchor/bench_app.py`) against the SAME on-chain anchor
+from Part B, not a freshly-trusted root.
 """
 from __future__ import annotations
 
@@ -116,32 +56,18 @@ from relayer.proofs.receipts_trie import build_receipts_trie_and_path, kec  # no
 from relayer.ssz import beacon_state as rbs_state  # noqa: E402
 from relayer.ssz import block_body as rbs_body  # noqa: E402
 from relayer.ssz import execution_payload as real_ssz  # noqa: E402
-from tests.state_anchor.conftest import (  # noqa: E402
-    Arc4Harness,
-    algod_client,
-    compile_teal,
-    deploy_donor_pair,
-    donor_txn,
-    funded_account,
-    kmd_client,
-    patched_repo_copy,
-    puya_compile,
-)
+from tests.harness.deployment import compile_teal, donor_txn, patched_repo_copy, puya_compile  # noqa: E402
+from tests.harness.m4 import checkpoint_data, finalized_m4, installed_committee, m4_donor_pair  # noqa: E402,F401
+from tests.state_anchor.harness import Arc4Harness  # noqa: E402
 from tests.sync_committee import reference as ref  # noqa: E402
-from tests.sync_committee.conftest import SyncCommitteeLiveHarness  # noqa: E402
-from tests.sync_committee.test_live_e2e_finality import (  # noqa: E402
-    CURRENT_SC_GINDEX,
-    FINALITY_GINDEX,
-    FULU_FORK_EPOCH,
-    FULU_FORK_VERSION,
-    GEN,
-    NEXT_SC_GINDEX,
-    _choose_mode_and_boxes,
-    _deploy_bench_apps,
-    _fetch_live_checkpoint_and_update,
-    _issue_donor_txn,
-    _submit_update_group,
-)
+
+# 011 §3.2/§8.2: every test in this file transitively depends on
+# `historical_fixture`, which downloads a real, ~1 GB full `BeaconState`
+# (measured 1,003,300,280 B) via `_fetch_full_state_cached` -- the
+# `live_heavy` tier (weekly cron / on-demand, not nightly): running it
+# nightly would be both an OOM risk on a hosted runner and an unreasonable
+# draw on the volunteer public beacon endpoint's bandwidth.
+pytestmark = pytest.mark.live_heavy
 
 RING_N = 8
 
@@ -159,198 +85,11 @@ G_BLOCK_NUMBER = 806
 CACHE_DIR = REPO_ROOT / "tests" / "state_anchor" / ".cache"
 
 
-# ---------------------------------------------------------------------------
-# Reachability / live checkpoint / M4 fixtures -- this file's OWN copies
-# (mirrors test_live_e2e.py's own reasoning: two live-chain test files must
-# never race on the same on-chain state).
-# ---------------------------------------------------------------------------
-
-
-def _beacon_reachable() -> bool:
-    for base in beacon.BEACON_APIS:
-        try:
-            req = urllib.request.Request(
-                base.rstrip("/") + "/eth/v1/beacon/light_client/finality_update", headers=beacon.HEADERS
-            )
-            with urllib.request.urlopen(req, timeout=5) as r:
-                if r.status == 200:
-                    return True
-        except Exception:  # noqa: BLE001
-            continue
-    return False
-
-
-@pytest.fixture(scope="module")
-def beacon_available() -> bool:
-    return _beacon_reachable()
-
-
-@pytest.fixture(scope="module")
-def genesis_validators_root() -> bytes:
-    return bytes.fromhex("4b363db94e286120d76eb905340fdd4e54bfe9f06bf33ff6cf5ad27f511bfe95")
-
-
-@pytest.fixture(scope="module")
-def live_data(beacon_available):
-    if not beacon_available:
-        pytest.skip("no reachable beacon-API endpoint in the pool")
-    return _fetch_live_checkpoint_and_update()
-
-
-@pytest.fixture(scope="module")
-def compiled_m4_bench(algod_available):
-    if not algod_available:
-        pytest.skip("no dev-mode algod reachable")
-    import subprocess
-
-    bench_src = REPO_ROOT / "contracts" / "sync_committee" / "bench_app.py"
-    out_dir = Path("/tmp/m8_hist_m4bench_out")
-    out_dir.mkdir(exist_ok=True)
-    subprocess.run([sys.executable, "-m", "puyapy", str(bench_src), "--out-dir", str(out_dir)], check=True, capture_output=True)
-
-    def compile_name(name, kind="approval"):
-        return (out_dir / f"{name}.{kind}.teal").read_text()
-
-    algod = algod_client()
-    return {
-        "callee_approval": compile_teal(algod, compile_name("DonorCallee")),
-        "callee_clear": compile_teal(algod, compile_name("DonorCallee", "clear")),
-        "issuer_approval": compile_teal(algod, compile_name("DonorIssuer")),
-        "issuer_clear": compile_teal(algod, compile_name("DonorIssuer", "clear")),
-    }
-
-
-@pytest.fixture(scope="module")
-def account(algod_available):
-    if not algod_available:
-        pytest.skip("no dev-mode algod reachable")
-    algod = algod_client()
-    kmd = kmd_client()
-    return funded_account(algod, kmd)
-
-
-@pytest.fixture(scope="module")
-def installed_committee(algod_available, live_data, compiled_m4_bench, genesis_validators_root, account):
-    """REAL M4: fresh `SyncCommitteeVerifier`, real live "fulu" fork row,
-    real bootstrap, real 64-chunk 512-member install. This file's OWN
-    instance (not shared with `test_live_e2e.py`/`test_live_e2e_finality.py`)."""
-    if not algod_available:
-        pytest.skip("no dev-mode algod reachable")
-    boot_args = live_data["boot_args"]
-    checkpoint_root = live_data["checkpoint_root"]
-
-    h = SyncCommitteeLiveHarness()
-    h.create(h.sender, genesis_validators_root)
-    callee_id, issuer_id = _deploy_bench_apps(h, compiled_m4_bench)
-
-    h.submit([(
-        "append_fork_row",
-        [FULU_FORK_EPOCH, FULU_FORK_VERSION, FINALITY_GINDEX, CURRENT_SC_GINDEX, NEXT_SC_GINDEX],
-        [(0, b"forks")],
-    )])
-
-    def key_box_name(gen, j):
-        return b"k:" + gen.to_bytes(8, "big") + j.to_bytes(8, "big")[7:8]
-
-    def session_box_name(gen):
-        return b"s:" + gen.to_bytes(8, "big")
-
-    def total_box_name(gen):
-        return b"a:" + gen.to_bytes(8, "big")
-
-    key_refs = [(0, key_box_name(GEN, j)) for j in range(8)]
-    session_ref = [(0, session_box_name(GEN))]
-    h.submit([
-        ("bootstrap", [boot_args.header, boot_args.committee_root, boot_args.current_sc_branch, checkpoint_root],
-         [(0, b"forks")] + key_refs[:7]),
-        ("install_open_keys", [], key_refs),
-        ("install_open_session", [], session_ref + key_refs[:7]),
-        ("noop_budget", [], session_ref),
-    ])
-
-    method = __import__("algosdk.abi", fromlist=["Method"]).Method.undictify(h.methods["install_chunk"])
-    from algosdk.atomic_transaction_composer import AccountTransactionSigner, AtomicTransactionComposer
-
-    for cursor in range(0, 512, 8):
-        chunk = boot_args.pubkey_pairs[cursor: cursor + 8]
-        compressed_blob = b"".join(c for c, _u in chunk)
-        uncompressed_blob = b"".join(u for _c, u in chunk)
-        box_j = cursor // 64
-        kb = key_box_name(GEN, box_j)
-        sb = session_box_name(GEN)
-        signer = AccountTransactionSigner(h.sk)
-        atc = AtomicTransactionComposer()
-        atc.add_transaction(_issue_donor_txn(h, issuer_id, callee_id, 40))
-        sp = h.algod.suggested_params()
-        sp.flat_fee = True
-        sp.fee = 1000
-        atc.add_method_call(
-            app_id=h.app_id, method=method, sender=h.sender, sp=sp, signer=signer,
-            method_args=[cursor, compressed_blob, uncompressed_blob], boxes=[(0, kb), (0, sb), (0, kb), (0, sb)],
-        )
-        atc.execute(h.algod, 4)
-
-    signer = AccountTransactionSigner(h.sk)
-    atc = AtomicTransactionComposer()
-    atc.add_transaction(_issue_donor_txn(h, issuer_id, callee_id, 15))
-    from algosdk.abi import Method
-
-    finalize_method = Method.undictify(h.methods["install_finalize"])
-    sp = h.algod.suggested_params()
-    sp.flat_fee = True
-    sp.fee = 1000
-    atc.add_method_call(
-        app_id=h.app_id, method=finalize_method, sender=h.sender, sp=sp, signer=signer,
-        method_args=[boot_args.aggregate_compressed, boot_args.aggregate_uncompressed],
-        boxes=[(0, session_box_name(GEN)), (0, total_box_name(GEN))],
-    )
-    atc.execute(h.algod, 4)
-
-    return {"h": h, "callee_id": callee_id, "issuer_id": issuer_id}
-
-
-@pytest.fixture(scope="module")
-def finalized_m4(installed_committee, live_data):
-    """Advances THIS file's own real M4 instance with the SAME live
-    `finality_update` Part A's `historical_fixture` builds its `block_roots`
-    proof from, so `fin_root`/`fin_state_root` genuinely agree between the
-    on-chain M4 read and the off-chain-computed HISTORICAL fixture."""
-    h = installed_committee["h"]
-    issuer_id = installed_committee["issuer_id"]
-    callee_id = installed_committee["callee_id"]
-    fu_now_args = live_data["fu_now_args"]
-    mode, box_refs, plan = _choose_mode_and_boxes(fu_now_args.sync_committee_bits, GEN)
-    # FIXED (this pass): the ad hoc `(box_refs + box_refs)[:16]` padding
-    # below this comment -- capped at the structural 2-transaction/16-ref
-    # ceiling -- used to compensate for `_choose_mode_and_boxes` never
-    # accounting for real box byte size, the exact root cause of the
-    # "box read budget (6144)"/"(18432)" failures this comment used to
-    # describe as live-data fragility with no fixed-constant fix. Real
-    # high-participation DIRECT mode can genuinely need MORE than 16 refs
-    # (up to 25, per relayer.group.boxes.plan_box_refs's own closed form) --
-    # a fixed 16-ref ceiling could never have covered that case regardless
-    # of padding. `_submit_update_group` now sizes the real transaction
-    # count (donor + as many noop_budget fillers as needed + submit_update)
-    # from the real `plan` directly.
-    result = _submit_update_group(h, issuer_id, callee_id, fu_now_args, fu_now_args.signature, mode, box_refs, plan=plan)
-    assert result.tx_ids, "real submit_update did not commit"
-    return h
-
-
 @pytest.fixture(scope="module")
 def compiled_anchor(algod_available):
     if not algod_available:
         pytest.skip("no dev-mode algod reachable")
     return puya_compile(REPO_ROOT / "contracts" / "state_anchor" / "anchor_app.py")
-
-
-@pytest.fixture(scope="module")
-def donors(algod_available, account):
-    if not algod_available:
-        pytest.skip("no dev-mode algod reachable")
-    algod = algod_client()
-    sender, sk = account
-    return deploy_donor_pair(algod, sender, sk)
 
 
 # ---------------------------------------------------------------------------
@@ -361,11 +100,9 @@ def donors(algod_available, account):
 def _fetch_full_state_cached(slot: int) -> dict:
     """Downloads (or reuses a disk cache keyed by slot -- see .gitignore)
     the real full BeaconState JSON at `slot`. Real size observed this pass:
-    ~956MB (bigger than the ~150-300MB estimate the task brief gave --
-    real mainnet state at ~2.33M validators is simply that big now).
-    Cached to disk, never held as a second in-memory copy beyond what
-    `json.load` itself needs (confirmed tractable on this machine: ~5s to
-    parse, ~24s to merkleize -- see `real_beacon_state.py`)."""
+    ~956MB. Cached to disk, never held as a second in-memory copy beyond
+    what `json.load` itself needs (~5s to parse, ~24s to merkleize -- see
+    `real_beacon_state.py`)."""
     CACHE_DIR.mkdir(parents=True, exist_ok=True)
     path = CACHE_DIR / f"state_{slot}.json"
     if not path.exists():
@@ -388,18 +125,16 @@ def _fetch_full_state_cached(slot: int) -> dict:
 
 
 @pytest.fixture(scope="module")
-def historical_fixture(beacon_available, live_data):
+def historical_fixture(beacon_available, checkpoint_data):
     """Part A, step by step (module docstring): fetch the real full state at
     the SAME finalized slot `finalized_m4` advances M4 to, independently
     re-derive its real top-level state root and cross-check against the
-    real header's own `state_root` BEFORE trusting anything else (§3.4's own
-    "derive, don't copy" discipline, applied here to a brand-new fork's
-    field count), pick a real T_SLOT ~20h back, confirm it against
-    `block_roots` directly, then build the real EL branches for T_SLOT's own
-    block."""
+    real header's own `state_root` BEFORE trusting anything else, pick a
+    real T_SLOT ~20h back, confirm it against `block_roots` directly, then
+    build the real EL branches for T_SLOT's own block."""
     if not beacon_available:
         pytest.skip("no reachable beacon-API endpoint in the pool")
-    fu_args = live_data["fu_now_args"]
+    fu_args = checkpoint_data["fu_now_args"]
     fin_slot = int.from_bytes(fu_args.finalized_header[0:8], "little")
     live_fin_state_root = fu_args.finalized_header[48:80]
     fin_root = ref.hash_tree_root_beacon_block_header(fu_args.finalized_header)
@@ -585,7 +320,7 @@ class TestG3CombinedM7M8ReceiptProof:
     (`contracts/state_anchor/bench_app.py`) is compiled fresh with
     `handoff.ANCHOR_APP_ID` patched to Part B's REAL, just-deployed
     `TrustedRootAnchor` app id (TP-M8-4's own compile-time-binding
-    discipline, `conftest.patched_repo_copy`)."""
+    discipline, `tests.harness.deployment.patched_repo_copy`)."""
 
     def test_real_receipt_verified_against_m8_anchor(self, real_historical_anchor, donors, account):
         from algosdk import transaction
@@ -616,11 +351,6 @@ class TestG3CombinedM7M8ReceiptProof:
         # own T2 box-staging path) only implements the MODE_INIT/MODE_NEXT
         # raw-app-arg path (§9.2's own scope), so a receipt needing box-
         # staging is out of scope for this probe by design, not oversight.
-        # Which real tx_index qualifies varies block to block (this fixture
-        # re-anchors a NEW real EL block every run, since `historical_fixture`
-        # always follows the CURRENT live finalized checkpoint) -- so this
-        # is a real, dynamic selection over the block's own real receipts,
-        # not a hardcoded index that happened to work once.
         LOG_INDEX = 0
         TX_INDEX = None
         nodes = None

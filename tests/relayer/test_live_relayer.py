@@ -44,43 +44,20 @@ from relayer.proofs.classify import classify
 from relayer.proofs.receipts_trie import build_receipts_trie_and_path
 from relayer.sources.eth_rpc import get_block_header, get_block_receipts
 
+from tests.harness.env import _algod_reachable, _beacon_reachable, _eth_rpc_reachable
+
 REPO_ROOT = Path(__file__).resolve().parents[2]
 GENESIS_VALIDATORS_ROOT_HEX = "4b363db94e286120d76eb905340fdd4e54bfe9f06bf33ff6cf5ad27f511bfe95"
 
-
-def _algod_reachable() -> bool:
-    from tests.sync_committee.conftest import _algod_reachable as check
-
-    return check()
-
-
-def _beacon_reachable() -> bool:
-    import urllib.request
-
-    from relayer.sources import beacon
-
-    for base in beacon.BEACON_APIS:
-        try:
-            req = urllib.request.Request(
-                base.rstrip("/") + "/eth/v1/beacon/light_client/finality_update", headers=beacon.HEADERS
-            )
-            with urllib.request.urlopen(req, timeout=5) as r:
-                if r.status == 200:
-                    return True
-        except Exception:  # noqa: BLE001
-            continue
-    return False
-
-
-def _eth_reachable() -> bool:
-    try:
-        from relayer.sources.eth_rpc import get_block_header
-
-        get_block_header("latest")
-        return True
-    except Exception:  # noqa: BLE001
-        return False
-
+# 011 §4.1: this whole file needs both algod and network (every test here is
+# Tier C, wholly live) but drives its own multi-fixture setup from these
+# eagerly-computed booleans rather than requesting `algod_available`/
+# `beacon_available` as fixture PARAMETERS -- the tier auto-marker infers
+# `needs_algod`/`needs_network` from a test's FIXTURE CLOSURE, which cannot
+# see a plain module-level function call, so this module-level `pytestmark`
+# is the explicit marker §4.1 requires for exactly this shape (mirroring
+# `tests/ssz/test_budget.py`'s own module-level pytestmark).
+pytestmark = [pytest.mark.needs_algod, pytest.mark.needs_network]
 
 ALGOD_AVAILABLE = _algod_reachable()
 BEACON_AVAILABLE = _beacon_reachable()
@@ -93,14 +70,14 @@ BEACON_AVAILABLE = _beacon_reachable()
 # not, per §4.3 rule 1, and does not, anywhere in this pass's changes).
 # ---------------------------------------------------------------------------
 def _deploy_m4() -> "SyncCommitteeLiveHarness":  # noqa: F821
-    from tests.sync_committee.conftest import SyncCommitteeLiveHarness
-    from tests.sync_committee.test_live_e2e_finality import (
+    from tests.harness.m4 import (
         CURRENT_SC_GINDEX,
         FINALITY_GINDEX,
         FULU_FORK_EPOCH,
         FULU_FORK_VERSION,
         NEXT_SC_GINDEX,
     )
+    from tests.sync_committee.harness import SyncCommitteeLiveHarness
 
     h = SyncCommitteeLiveHarness()
     h.create(h.sender, bytes.fromhex(GENESIS_VALIDATORS_ROOT_HEX))
@@ -134,8 +111,8 @@ def checkpoint_data():
 def donor_pair():
     if not ALGOD_AVAILABLE:
         pytest.skip("no dev-mode algod reachable")
-    from tests.state_anchor.conftest import algod_client, funded_account, kmd_client
-    from tests.state_anchor.conftest import deploy_donor_pair as ts_deploy_donor_pair
+    from tests.harness.chain import algod_client, funded_account, kmd_client
+    from tests.harness.deployment import deploy_donor_pair as ts_deploy_donor_pair
 
     algod_c = algod_client()
     kmd_c = kmd_client()
@@ -243,7 +220,7 @@ def test_l2_submit_update_all_8_key_boxes_g1_m9(env_b):
 
     popcount = sum(1 for i in range(512) if m4bits_bit_set(bits, i))
     try:
-        result = client._submit_update_group(1, fu_now_args, forced_mode, plan)
+        result = client.submit_update_group(1, fu_now_args, forced_mode, plan)
     except RuntimeError as exc:
         if "too many inner transactions" not in str(exc):
             raise
@@ -290,7 +267,8 @@ def test_l2_submit_update_all_8_key_boxes_g1_m9(env_b):
 # ---------------------------------------------------------------------------
 @pytest.fixture(scope="module")
 def env_a_anchor(env_a, donor_pair):
-    from tests.state_anchor.conftest import Arc4Harness, algod_client, puya_compile
+    from tests.harness.deployment import puya_compile
+    from tests.state_anchor.harness import Arc4Harness
 
     h = env_a["h"]
     compiled = puya_compile(REPO_ROOT / "contracts" / "state_anchor" / "anchor_app.py")
@@ -513,7 +491,8 @@ def env_l6(donor_pair):
         pytest.skip("no dev-mode algod reachable")
     from algosdk import transaction
 
-    from tests.state_anchor.conftest import algod_client, compile_teal, puya_compile
+    from tests.harness.chain import algod_client
+    from tests.harness.deployment import compile_teal, puya_compile
 
     algod_c = algod_client()
     compiled = puya_compile(REPO_ROOT / "contracts" / "receipt" / "bench_app.py")
@@ -541,7 +520,7 @@ def env_l6(donor_pair):
     return {"client": EthAvmClient(cfg), "m7_app_id": m7_app_id}
 
 
-@pytest.mark.skipif(not _eth_reachable(), reason="no reachable Ethereum RPC endpoint in the pool")
+@pytest.mark.skipif(not _eth_rpc_reachable(), reason="no reachable Ethereum RPC endpoint in the pool")
 def test_l6_m7_t2_donor_sibling_under_10_txns(env_l6):
     found = _find_real_t2_receipt()
     if found is None:

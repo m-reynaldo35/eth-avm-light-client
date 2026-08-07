@@ -85,6 +85,7 @@ def test_g5_fulu_field_list_is_38_entries():
     assert FULU_FIELDS.index("block_roots") == 5
 
 
+@pytest.mark.needs_network
 def test_g5_live_spec_fetch_confirms_activation_epochs_or_skips():
     from deploy.forks import KNOWN_ACTIVATION_EPOCHS, fetch_fork_activation_epochs
 

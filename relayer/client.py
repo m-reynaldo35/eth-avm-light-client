@@ -626,7 +626,7 @@ class EthAvmClient:
         math for a delete rather than a create/read). `retire`'s own
         transaction claims the first 8 refs; the rest ride on `noop_budget`
         filler transactions in the same group, the same convention
-        `_submit_update_group` already uses."""
+        `submit_update_group` already uses."""
         signer = self._signer()
         sizes = m4_retire_box_sizes(gen)
         plan = plan_box_refs(sizes)
@@ -811,7 +811,7 @@ class EthAvmClient:
             committee_gen = cur_gen
 
         mode, plan = m4.plan_submit_update_boxes(args.sync_committee_bits, committee_gen)
-        result = self._submit_update_group(committee_gen, args, mode, plan)
+        result = self.submit_update_group(committee_gen, args, mode, plan)
         from relayer.codec.header import hash_tree_root_beacon_block_header
 
         return {
@@ -825,8 +825,18 @@ class EthAvmClient:
             "confirmed_round": result.confirmed_round,
         }
 
-    def _submit_update_group(self, gen: int, args, mode: int, plan):
-        """§7.4/§18 item 3: sizes the group's TRANSACTION COUNT from the
+    def submit_update_group(self, gen: int, args, mode: int, plan):
+        """Promoted from a private `_submit_update_group` to a public
+        method (docs/design/011-test-harness-ci.md §6.3): the M11 rebasing
+        of `tests/sync_committee/test_live_e2e_finality.py`'s adversarial
+        corrupted-signature/corrupted-branch tests needs to submit a
+        deliberately-tampered `SubmitUpdateArgs` through the REAL group
+        path, and reaching into a private method from a test would leave
+        those two tests coupled to an underscore. This is a genuine
+        operator-usable seam (submit a specific, already-planned update
+        group directly); no behaviour changed by the rename.
+
+        §7.4/§18 item 3: sizes the group's TRANSACTION COUNT from the
         real bitfield's box-reference plan, never assumes 2 transactions
         suffice. At k=8 key boxes (worst case), 25 refs -> 4 transactions:
         `[DonorIssuer, noop_budget, noop_budget, submit_update]`, exactly

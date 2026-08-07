@@ -102,14 +102,7 @@ from __future__ import annotations
 import pytest
 
 from tests.state_anchor import synth
-from tests.state_anchor.conftest import (
-    Arc4Harness,
-    algod_client,
-    deploy_donor_pair,
-    funded_account,
-    kmd_client,
-    puya_compile,
-)
+from tests.state_anchor.harness import Arc4Harness
 
 RING_N = 8
 
@@ -138,31 +131,6 @@ T_SLOT = ELECTRA_ACTIVATION_SLOT - 1024  # 11,648,000, epoch 364,000 (Deneb)
 FIN_SLOT = ELECTRA_ACTIVATION_SLOT  # 11,649,024, epoch 364,032 (Electra, exactly the first Electra epoch)
 
 EL_BLOCK_NUMBER = 22_000_000  # arbitrary EL block number for the ring key
-
-
-@pytest.fixture(scope="module")
-def compiled(algod_available, anchor_src, bench_src):
-    if not algod_available:
-        pytest.skip("no dev-mode algod reachable")
-    return puya_compile(anchor_src), puya_compile(bench_src)
-
-
-@pytest.fixture(scope="module")
-def account(algod_available):
-    if not algod_available:
-        pytest.skip("no dev-mode algod reachable")
-    algod = algod_client()
-    kmd = kmd_client()
-    return funded_account(algod, kmd)
-
-
-@pytest.fixture(scope="module")
-def donors(algod_available, account):
-    if not algod_available:
-        pytest.skip("no dev-mode algod reachable")
-    algod = algod_client()
-    sender, sk = account
-    return deploy_donor_pair(algod, sender, sk)
 
 
 @pytest.fixture()
@@ -354,23 +322,6 @@ class TestF6DenebElectraTwoRowTrap:
         res = h.call("anchor_historical", args, apps=[m4probe.app_id], extra_budget=320_000)
         assert not res.ok, "a stale fork table missing the Electra row must reject a genuinely Electra-shaped anchor"
         assert "assert failed" in res.failure
-
-
-@pytest.fixture(scope="module")
-def beacon_available() -> bool:
-    import urllib.request
-
-    from relayer.sources import beacon
-
-    for base in beacon.BEACON_APIS:
-        try:
-            req = urllib.request.Request(base.rstrip("/") + "/eth/v1/config/spec", headers=beacon.HEADERS)
-            with urllib.request.urlopen(req, timeout=5) as r:
-                if r.status == 200:
-                    return True
-        except Exception:  # noqa: BLE001
-            continue
-    return False
 
 
 class TestElectraEpochLiveCrossCheck:

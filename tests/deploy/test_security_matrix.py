@@ -6,8 +6,6 @@ G8-M9. §17 item 1: `deploy/` MUST import `relayer` (and `contracts.*`/
 from __future__ import annotations
 
 import ast
-import urllib.error
-import urllib.request
 from pathlib import Path
 
 import pytest
@@ -15,23 +13,6 @@ import pytest
 REPO_ROOT = Path(__file__).resolve().parents[2]
 DEPLOY_DIR = REPO_ROOT / "deploy"
 RELAYER_DIR = REPO_ROOT / "relayer"
-
-ALGOD_ADDRESS = "http://localhost:4051"
-TOKEN = "a" * 64
-
-
-def _algod_reachable() -> bool:
-    try:
-        req = urllib.request.Request(ALGOD_ADDRESS + "/v2/status", headers={"X-Algo-API-Token": TOKEN})
-        with urllib.request.urlopen(req, timeout=2) as r:
-            return r.status == 200
-    except (urllib.error.URLError, OSError):
-        return False
-
-
-@pytest.fixture(scope="session")
-def algod_available() -> bool:
-    return _algod_reachable()
 
 
 def _imported_top_level_modules(py_file: Path) -> set[str]:
@@ -123,42 +104,12 @@ def test_s3_noop_only_contract_never_refused_even_on_mainnet():
 # S-4: M8 create with an m4_app_id whose program hash is not M4's --
 # refused client-side, before any funding Payment.
 # ---------------------------------------------------------------------------
-@pytest.fixture()
-def algod_client(algod_available):
-    if not algod_available:
-        pytest.skip(f"no dev-mode algod reachable at {ALGOD_ADDRESS}")
-    from algosdk.v2client import algod as algod_mod
-
-    return algod_mod.AlgodClient(TOKEN, ALGOD_ADDRESS)
-
-
-@pytest.fixture()
-def funded_account(algod_client):
-    from algosdk import kmd as kmd_mod
-
-    kmd = kmd_mod.KMDClient(TOKEN, "http://localhost:4052")
-    wallets = kmd.list_wallets()
-    wid = next(w["id"] for w in wallets if w["name"] == "unencrypted-default-wallet")
-    handle = kmd.init_wallet_handle(wid, "")
-    try:
-        addrs = kmd.list_keys(handle)
-        best, best_bal = None, -1
-        for a in addrs:
-            bal = algod_client.account_info(a)["amount"]
-            if bal > best_bal:
-                best, best_bal = a, bal
-        sk = kmd.export_key(handle, "", best)
-        return best, sk
-    finally:
-        kmd.release_wallet_handle(handle)
-
-
-def test_s4_wrong_m4_counterparty_refused_before_funding(algod_client, funded_account):
+def test_s4_wrong_m4_counterparty_refused_before_funding(algod_client, account):
     from algosdk import transaction
 
     from deploy.plans.m8 import CounterpartyMismatch, verify_m4_counterparty
 
-    sender, sk = funded_account
+    sender, sk = account
     # Deploy some UNRELATED app (not SyncCommitteeVerifier) to serve as the
     # "wrong" m4_app_id -- a real, live app id whose program hash genuinely
     # is not the pinned SyncCommitteeVerifier hash.
@@ -204,13 +155,13 @@ def test_s5_governance_equals_signer_warns():
     assert target.warn_if_governance_equals_signer(different) is None
 
 
-def test_s5_apply_refuses_without_yes_when_governance_equals_signer(algod_client, funded_account, tmp_path, monkeypatch):
+def test_s5_apply_refuses_without_yes_when_governance_equals_signer(algod_client, account, tmp_path, monkeypatch):
     import deploy.manifest as manifest_mod
     from deploy.config import ContractTarget, DeployTarget, NetworkConfig
     from deploy.diff import GovernanceSignerWarning, apply
 
     monkeypatch.setattr(manifest_mod, "MANIFEST_DIR", tmp_path)
-    sender, sk = funded_account
+    sender, sk = account
     sp = algod_client.suggested_params()
     import base64
 
@@ -231,12 +182,12 @@ def test_s5_apply_refuses_without_yes_when_governance_equals_signer(algod_client
 # S-7: tampered manifest (app id swapped for an unrelated app) -- verify
 # fails on the approval-hash pin, not on behaviour.
 # ---------------------------------------------------------------------------
-def test_s7_tampered_manifest_fails_on_approval_hash_pin(algod_client, funded_account):
+def test_s7_tampered_manifest_fails_on_approval_hash_pin(algod_client, account):
     from algosdk import transaction
 
     from deploy.inspect import verify_app
 
-    sender, sk = funded_account
+    sender, sk = account
     probe_teal = "#pragma version 10\nint 1\nreturn\n"
     import base64
 
