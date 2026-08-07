@@ -1,0 +1,16 @@
+{
+  "network": {
+    "algod_url": "http://localhost:4051",
+    "algod_token": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "genesis_id": "dockernet-v1",
+    "genesis_hash": "DVm2XSUdzmtXQS2e9llLNJc287s4Jmx5DUF2IXUMGZw="
+  },
+  "governance": "OR3RLQVXMVX3OVQ6K263Z5HKAC2UA62GCBSJXWB5DSTJE727WCAOPHGBBY",
+  "contracts": {
+    "m4": {"deploy": true, "genesis_validators_root": "0x4b363db94e286120d76eb905340fdd4e54bfe9f06bf33ff6cf5ad27f511bfe95"},
+    "m8": {"deploy": true, "ring_n": 8},
+    "m7": {"deploy": true, "t2_float": true},
+    "m6": {"deploy": true}
+  },
+  "forks": ["deneb", "electra", "fulu"]
+}

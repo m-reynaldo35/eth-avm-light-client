@@ -1,0 +1,50 @@
+{
+  "boxes": [
+    {
+      "count": "0 or 1, transient, per T2 proof",
+      "created_by": "MODE_STAGE_OPEN",
+      "deleted_by": "mpt7_stage_close (same atomic group)",
+      "family": "t2_staging",
+      "lifetime": "transient -- opened and closed inside one atomic group (\u00a711.6)",
+      "mbr_microalgo_max": 1644100,
+      "name": {
+        "caller_chosen": true,
+        "name_bytes": 8
+      },
+      "value_bytes": "[1944, 4096]"
+    }
+  ],
+  "contract": "Mpt7ReceiptApp",
+  "deploy": {
+    "create_creates_boxes": [],
+    "create_signature": null,
+    "init_calls": [],
+    "mbr_at_create_microalgo": 100000,
+    "ordering": [],
+    "t2_float_microalgo": 1744100
+  },
+  "design_doc": "docs/design/007-receipt-log-proof.md",
+  "global_state": {
+    "creator_mbr_microalgo": 100000,
+    "keys": [],
+    "schema": {
+      "bytes": 0,
+      "ints": 0
+    }
+  },
+  "invariants": [
+    "no permanent boxes, no global state, no governance surface",
+    "T2 staged leaf length is in [1944, 4096] bytes"
+  ],
+  "program": {
+    "approval_bytes": 3108,
+    "approval_sha256": "f7a846ff33314d8f9ecc48e85584327f13e9cb808a3650b30e69339c7fcdc9d2",
+    "avm_version": 10,
+    "clear_bytes": 4,
+    "clear_sha256": "ed90f0d2da1f1d1abd773c45230651a292a90edbc12a7bf859a493a12a640ce7",
+    "min_extra_pages": 1,
+    "on_completion_gate": "NoOp only"
+  },
+  "schema_version": 1,
+  "source": "contracts/receipt/bench_app.py"
+}

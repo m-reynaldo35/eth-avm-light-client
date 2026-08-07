@@ -20,3 +20,10 @@ tests/state_anchor/.cache/
 # Vercel CLI project link (environment-specific, not portable across machines
 # or accounts -- re-created by `vercel link` from repo root).
 .vercel
+
+# M10: private/local deployment manifests (design doc §16) -- a manifest for
+# a public deployment (localnet used by this repo's own live tests,
+# testnet, mainnet) is committed under deploy/manifests/ deliberately (§9.5:
+# it is the durable record of what was deployed); anything suffixed
+# `.local.json` is a throwaway individual devnet run and is not.
+deploy/manifests/*.local.json

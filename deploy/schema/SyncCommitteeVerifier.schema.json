@@ -1,0 +1,185 @@
+{
+  "boxes": [
+    {
+      "count": 1,
+      "created_by": "create",
+      "deleted_by": null,
+      "family": "fork_table",
+      "lifetime": "permanent -- no deleter exists (\u00a710.4)",
+      "mbr_microalgo": 234900,
+      "name": {
+        "literal": "forks",
+        "name_bytes": 5
+      },
+      "value_bytes": 576
+    },
+    {
+      "count": "8 per generation (64 keys/box)",
+      "created_by": "install_open_keys",
+      "deleted_by": "install_abort, retire",
+      "family": "committee_keys",
+      "lifetime": "permanent while the generation is installed (\u00a710.4)",
+      "mbr_microalgo": 2464500,
+      "name": {
+        "key": "itob(gen) || itob(j)[7:8]",
+        "name_bytes": 11,
+        "prefix": "k:"
+      },
+      "value_bytes": 6144
+    },
+    {
+      "count": "1 per in-flight session",
+      "created_by": "install_open_session",
+      "deleted_by": "install_finalize, install_abort",
+      "family": "install_session",
+      "lifetime": "transient -- deleted at session end",
+      "mbr_microalgo": 176100,
+      "name": {
+        "key": "itob(gen)",
+        "name_bytes": 10,
+        "prefix": "s:"
+      },
+      "value_bytes": 424
+    },
+    {
+      "count": "1 per installed generation",
+      "created_by": "install_finalize",
+      "deleted_by": "retire",
+      "family": "aggregate",
+      "lifetime": "permanent while the generation is installed (\u00a710.4)",
+      "mbr_microalgo": 44900,
+      "name": {
+        "key": "itob(gen)",
+        "name_bytes": 10,
+        "prefix": "a:"
+      },
+      "value_bytes": 96
+    }
+  ],
+  "contract": "SyncCommitteeVerifier",
+  "deploy": {
+    "create_creates_boxes": [
+      "forks"
+    ],
+    "create_signature": "create(address,byte[32])void",
+    "init_calls": [
+      {
+        "append_only": true,
+        "boxes": [
+          "forks"
+        ],
+        "cursor": "global:fork_count",
+        "method": "append_fork_row",
+        "repeat": "len(fork_rows)"
+      }
+    ],
+    "mbr_at_create_microalgo": 334900,
+    "min_box_refs_for_install_open": 25,
+    "ordering": []
+  },
+  "design_doc": "docs/design/004-sync-committee.md",
+  "global_state": {
+    "creator_mbr_microalgo": 820500,
+    "keys": [
+      {
+        "key": "gov",
+        "type": "address"
+      },
+      {
+        "key": "gvr",
+        "type": "AVMBytes"
+      },
+      {
+        "key": "fin_slot",
+        "type": "uint64"
+      },
+      {
+        "key": "fin_root",
+        "type": "AVMBytes"
+      },
+      {
+        "key": "fin_state_root",
+        "type": "AVMBytes"
+      },
+      {
+        "key": "att_slot",
+        "type": "uint64"
+      },
+      {
+        "key": "att_state_root",
+        "type": "AVMBytes"
+      },
+      {
+        "key": "cur_gen",
+        "type": "uint64"
+      },
+      {
+        "key": "cur_period",
+        "type": "uint64"
+      },
+      {
+        "key": "next_gen",
+        "type": "uint64"
+      },
+      {
+        "key": "next_period",
+        "type": "uint64"
+      },
+      {
+        "key": "next_committee_root_trusted",
+        "type": "AVMBytes"
+      },
+      {
+        "key": "next_committee_root_period",
+        "type": "uint64"
+      },
+      {
+        "key": "inst_state",
+        "type": "uint64"
+      },
+      {
+        "key": "inst_gen",
+        "type": "uint64"
+      },
+      {
+        "key": "inst_period",
+        "type": "uint64"
+      },
+      {
+        "key": "inst_root",
+        "type": "AVMBytes"
+      },
+      {
+        "key": "inst_cursor",
+        "type": "uint64"
+      },
+      {
+        "key": "fork_count",
+        "type": "uint64"
+      },
+      {
+        "key": "gen_counter",
+        "type": "uint64"
+      }
+    ],
+    "schema": {
+      "bytes": 7,
+      "ints": 13
+    }
+  },
+  "invariants": [
+    "fork table capacity is 16 rows (FORK_TABLE_CAPACITY)",
+    "genesis_validators_root is write-once at create, no setter"
+  ],
+  "program": {
+    "approval_bytes": 6980,
+    "approval_sha256": "7a937250bbff32a2269b6773de508456e05c677c5f89810c16ce70d2bbe2f152",
+    "avm_version": 10,
+    "clear_bytes": 4,
+    "clear_sha256": "d17be8c9ad6dedb5b4394a8fdc00273a4deb4725415ff8ce151a12544b4a280a",
+    "min_extra_pages": 3,
+    "on_completion_gate": "NoOp only"
+  },
+  "schema_version": 1,
+  "source": "contracts/sync_committee/verifier.py"
+}
