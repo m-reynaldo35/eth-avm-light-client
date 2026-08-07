@@ -132,7 +132,39 @@ def test_e1_g1_m10_manifest_driven_deploy_feeds_m9_end_to_end(tmp_path, monkeypa
 
     anchored_block = anchor_result.record["el_block_number"]
 
-    receipt_result = client.prove_receipt(int(anchored_block), 0, 0, against_anchor=True)
+    # FIXED (real bug found live): this used to hardcode tx_index=0,
+    # log_index=0. `prove_receipt(against_anchor=True)` only supports T1
+    # (raw-arg) leaves -- `AnchorReceiptProbe` doesn't implement the T2
+    # box-staged path (§9.2's own scope) -- so a real block whose tx 0
+    # happens to need T2 made this test fail with TierUnsupported, not a
+    # real regression. Mirrors tests/state_anchor/test_live_historical.py's
+    # own dynamic-selection discipline: scan the real, currently-anchored
+    # block's own receipts for a transaction that both classifies as T1
+    # and has at least one real log, instead of assuming index 0 qualifies.
+    from relayer.proofs import classify as classify_mod
+    from relayer.proofs.receipts_trie import build_receipts_trie_and_path
+    from relayer.sources.eth_rpc import get_block_receipts
+
+    receipts = get_block_receipts(int(anchored_block))
+    tx_index = log_index = None
+    for r in receipts:
+        idx = int(r.get("transactionIndex", "0x0"), 16)
+        if not r.get("logs"):
+            continue
+        try:
+            _root, nodes = build_receipts_trie_and_path(receipts, idx)
+        except KeyError:
+            continue
+        if classify_mod.classify(nodes[-1]).tier == "T1":
+            tx_index, log_index = idx, 0
+            break
+    assert tx_index is not None, (
+        f"no transaction in real EL block {anchored_block} has a real log and a T1-sized "
+        "receipt leaf -- would need the T2 box-staging path AnchorReceiptProbe intentionally "
+        "does not implement (§9.2 scope)"
+    )
+
+    receipt_result = client.prove_receipt(int(anchored_block), tx_index, log_index, against_anchor=True)
     assert receipt_result.rstatus_name in ("R_INCLUDED", "R_ABSENT", "R_NO_SUCH_LOG", "R_ZERO_LOGS"), (
         f"unexpected rstatus: {receipt_result.rstatus_name}"
     )
