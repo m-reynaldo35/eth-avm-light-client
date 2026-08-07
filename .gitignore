@@ -16,3 +16,7 @@ _build_composer/
 # development doesn't re-download every time. Never real chain state a
 # reviewer needs committed -- it's just an HTTP response cache, keyed by slot.
 tests/state_anchor/.cache/
+
+# Vercel CLI project link (environment-specific, not portable across machines
+# or accounts -- re-created by `vercel link` from repo root).
+.vercel

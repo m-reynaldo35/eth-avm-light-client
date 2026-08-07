@@ -12,13 +12,39 @@ dependencies = [
     "rlp",
     "pycryptodome",
     "py_ecc",
+    # fastapi/uvicorn/x402-avm below are service/x402_endpoint's own deps, not
+    # relayer's -- relayer/ still imports none of them (G8-M9's AST-enforced
+    # import-purity test covers this). They live in THIS list, not just
+    # service/x402_endpoint/requirements.txt, because Vercel's Python/FastAPI
+    # builder resolves dependencies from pyproject.toml exclusively once
+    # [tool.vercel] is present -- requirements.txt is silently ignored for
+    # the deployed build (confirmed live, 2026-08-07: a deploy with these
+    # three only in requirements.txt installed py-algorand-sdk/rlp/
+    # pycryptodome/py_ecc and NOTHING else, and `main.py`'s own `import
+    # fastapi` crashed the function immediately). requirements.txt is kept
+    # for local/non-Vercel installs and must be updated in step with this
+    # list.
+    "fastapi",
+    "uvicorn[standard]",
+    "x402-avm[fastapi,avm]",
 ]
 
 # Only `relayer` is a distributable package today (docs/design/009-relayer-client.md
-# §17) -- `contracts`, `tests`, `bench`, `deploy`, `service` are this repo's own
-# development tree, not published artifacts. M12 ("Docs & packaging / release
-# prep") owns the full release story; this is the minimum needed for
-# `service/x402_endpoint/requirements.txt`'s `-e ../..` editable install to
-# resolve `import relayer` at all.
+# §17) -- `contracts`, `tests`, `bench`, `deploy` are this repo's own
+# development tree, not published artifacts. `service/x402_endpoint` is a real
+# deployed artifact (Vercel, see [tool.vercel] below) but not a published
+# package either. M12 ("Docs & packaging / release prep") owns the full
+# release story; this file is the minimum needed for both `relayer`'s own
+# editable-install consumers and Vercel's build to resolve everything they
+# need from one file.
 [tool.setuptools]
 packages = ["relayer", "relayer.sources", "relayer.codec", "relayer.ssz", "relayer.proofs", "relayer.group", "relayer.drivers"]
+
+# Real mainnet deployment (2026-08-07): service/x402_endpoint/main.py,
+# resolved as service.x402_endpoint.main:app -- requires service/__init__.py
+# and service/x402_endpoint/__init__.py to exist so the dotted path resolves.
+# Vercel's Python/FastAPI framework detection needs this explicitly since the
+# entrypoint isn't at one of its default-scanned locations (api/index.py,
+# app/main.py, etc).
+[tool.vercel]
+entrypoint = "service.x402_endpoint.main:app"

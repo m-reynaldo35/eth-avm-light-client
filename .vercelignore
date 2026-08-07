@@ -1,0 +1,15 @@
+.git/
+contracts/
+tests/
+bench/
+docs/
+deploy/
+tests/fixtures/
+*.pyc
+__pycache__/
+.pytest_cache/
+.secrets/
+service/x402_endpoint/.secrets/
+service/x402_endpoint/.env
+service/x402_endpoint/test_client_payment.py
+tests/relayer/

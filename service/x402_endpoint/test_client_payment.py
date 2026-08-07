@@ -51,7 +51,7 @@ x402 = x402ClientSync()
 register_exact_avm_client(x402, signer)
 session = x402_requests(x402)
 
-url = "http://localhost:8124/verify-receipt/25691209/0/0"
+url = "https://x402endpoint-nu.vercel.app/verify-receipt/25691209/0/0"
 print(f"paying client address: {CLIENT_ADDR}")
 print(f"requesting: {url}")
 resp = session.get(url, timeout=60)

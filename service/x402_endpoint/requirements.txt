@@ -4,6 +4,14 @@
 # to relayer/. `-e ../..` installs the repo root in editable mode so
 # `import relayer` resolves; a packaged release would pin a real version
 # instead.
+#
+# NOT used by the real Vercel deployment (confirmed live, 2026-08-07):
+# Vercel's Python/FastAPI builder resolves dependencies from the repo root's
+# `pyproject.toml` exclusively once `[tool.vercel]` is present there --
+# this file is read only for local/non-Vercel installs (e.g. `pip install
+# -r requirements.txt` in a dev venv). Keep the package list below in sync
+# with `pyproject.toml`'s `[project.dependencies]` by hand; nothing enforces
+# this automatically yet.
 -e ../..
 fastapi
 uvicorn[standard]
