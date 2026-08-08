@@ -77,8 +77,8 @@
     },
     "tests/harness/test_packaging.py": {
       "needs_algod": 0,
-      "needs_network": 0,
-      "offline": 8
+      "needs_network": 2,
+      "offline": 6
     },
     "tests/harness/test_quarantine.py": {
       "needs_algod": 0,
@@ -300,8 +300,8 @@
   "generated_by": "pytest --write-tier-manifest",
   "totals": {
     "collected": 632,
-    "live": 94,
+    "live": 96,
     "live_heavy": 2,
-    "offline": 536
+    "offline": 534
   }
 }

@@ -1,6 +1,18 @@
 """Suite W (design doc 012 §12.2): packaging, offline (plus one real build
 step -- `python -m build` itself needs no network, it just invokes
 setuptools against the committed pyproject.toml/source tree).
+
+W-2 and W-6 are the exception: a genuinely clean venv's `pip install`
+resolves against the real PyPI index even when every wheel it needs is
+already cache-warm (pip's default resolver always makes an index round
+trip unless told `--no-index`), so it needs real network -- caught live,
+ci-offline.yml's own dead-proxy env vars on its "Offline tier" step exist
+precisely to make this kind of accidental network dependency loud rather
+than silent, and it worked (`ProxyError` on `/simple/py-algorand-sdk/`, run
+31247882265). Marked `needs_network` rather than forced through the dead
+proxy or given a `--no-index --find-links` workaround, because the thing
+under test IS "does a real `pip install` of the published wheel actually
+work", which is not a question `--no-index` can honestly answer.
 """
 from __future__ import annotations
 
@@ -61,6 +73,7 @@ def test_w1_wheel_contains_only_relayer(built_wheel):
 # everything and would silently under-count -- 012 §4.1's own measurement
 # methodology).
 # ---------------------------------------------------------------------------
+@pytest.mark.needs_network
 def test_w2_clean_venv_dependency_closure_is_at_most_20_packages(built_wheel, tmp_path):
     venv_dir = tmp_path / "clean_venv"
     venv.EnvBuilder(with_pip=True).create(venv_dir)
@@ -133,6 +146,7 @@ def test_w5_relayer_dunder_version_matches_pyproject_version():
 # ---------------------------------------------------------------------------
 # W-6 (G6-M12): a clean venv, real install, real invocations.
 # ---------------------------------------------------------------------------
+@pytest.mark.needs_network
 def test_w6_clean_venv_install_and_both_cli_forms_work(built_wheel, tmp_path):
     venv_dir = tmp_path / "clean_venv_install"
     venv.EnvBuilder(with_pip=True).create(venv_dir)
