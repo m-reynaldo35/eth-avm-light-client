@@ -87,6 +87,12 @@ test = [
     # on a clean runner), exactly the class of bug ci-offline.yml exists to
     # catch.
     "cramjam>=2.11",
+    # tests/harness/test_packaging.py (Suite W, 012 §12.2) shells out to
+    # `python -m build --wheel` to inspect a real built wheel. Missing from
+    # this list originally -- worked locally only because it happened to
+    # already be installed from an earlier, undeclared pass -- caught by
+    # ci-offline.yml's own real run on this push: "No module named build".
+    "build>=1.2",
 ]
 contracts = [
     "puyapy==5.9.0",
