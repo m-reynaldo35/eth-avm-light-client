@@ -77,7 +77,17 @@ test = [
     # catch.
     "cramjam>=2.11",
 ]
-contracts = ["puyapy==5.9.0"]
+contracts = [
+    "puyapy==5.9.0",
+    # tests/ssz/test_budget.py shells out to `algokit compile py` to build a
+    # real TEAL harness for live opcode-budget measurement (needs_algod, so
+    # only ci-live.yml installs this extra). Missing from this list
+    # originally -- worked locally only because it happened to already be
+    # installed (via pipx) from an earlier, undeclared pass -- caught on
+    # ci-live.yml's own first real execution (run 31228946039):
+    # FileNotFoundError: [Errno 2] No such file or directory: 'algokit'.
+    "algokit>=2.10,<3",
+]
 
 # §7.2: `--strict-markers` so a typo'd marker is a collection error, not a
 # silently never-selected test (T-7). `-p tests.harness.tiers -p
