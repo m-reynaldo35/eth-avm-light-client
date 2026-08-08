@@ -6,14 +6,14 @@ document. It is regenerated — the *table*, not the prose — at each release.
 
 ## The checklist
 
-Every "state" cell is measured, not asserted. **Nine rows block a `v1.0.0`
-tag; two of the nine need a real run this documentation pass could not
-perform itself** (see "What this pass could not close," below).
+Every "state" cell is measured, not asserted. **Nine rows originally
+blocked a `v1.0.0` tag; eight are now closed. One remains** (see "What this
+pass could not close," below).
 
 | # | item | state (this pass) | blocks v1? |
 |---|---|---|---|
 | 1 | `ci-live.yml`'s real body has run and passed | **CLOSED.** Run [31229821639](https://github.com/m-reynaldo35/eth-avm-light-client/actions/runs/31229821639) — `live` 589 passed/1 skipped/2 deselected in 774.5s, `contracts-live` green. The first real, green `ci-live` run in this project's history. | no longer |
-| 2 | A `pull_request` event has run CI at least once | **OPEN.** 0 of this project's workflow runs, ever, have been a `pull_request` event. Needs one real PR. | **yes — human action** |
+| 2 | A `pull_request` event has run CI at least once | **CLOSED.** [PR #1](https://github.com/m-reynaldo35/eth-avm-light-client/pull/1), 3/3 jobs green ([31248827365](https://github.com/m-reynaldo35/eth-avm-light-client/actions/runs/31248827365)) — the first `pull_request`-triggered CI run in this project's history. Left open, unmerged (merging is a human approval step). | no longer |
 | 3 | A real testnet (or mainnet) deploy exists in an acceptance gate | **OPEN.** No public-network deploy has ever been performed; devnet-with-real-data is the strongest evidence so far. Needs funded testnet ALGO (≈24–32 ALGO) and 15–25 minutes. | **yes — human action, needs funding** |
 | 4 | A committed manifest for the live mainnet deployment | **CLOSED.** `deploy/manifests/mainnet-v1.0.json` records M7 + the donor pair, verified live against real mainnet with no signer (`deploy verify`, exit 0). | no longer |
 | 5 | `python -m relayer` works | **CLOSED.** `relayer/__main__.py` added; both `python -m relayer --help` and the `eth-avm-relayer` console script work from a clean-venv wheel install. | no longer |
@@ -28,17 +28,18 @@ perform itself** (see "What this pass could not close," below).
 | 14 | 13 of M8's 22 error codes untested | Committed baseline (`tests/harness/error_codes_uncovered.txt`); growth is a red build | no — tracked, not blocking |
 | 15 | T3 unimplemented | ~2.2% of a real 94,667-receipt sample needs it | no — no T3 coverage number is published anywhere |
 | 16 | Nothing monitors the live service/app | Measured up at release time; no alerting of any kind | no — docs must not say "monitored," and don't |
-| 17 | AlgoPlonk's swallowed-error bug unreported upstream | A draft report with the two-line diff and an existing reproduction sits at `tests/fixtures/spike-reference/zk-m7/UPSTREAM_ISSUE_ALGOPLONK.md`, marked "not filed — for human review before submitting." **Still not filed.** | no — nothing this repo ships depends on AlgoPlonk; **human action to file it** |
+| 17 | AlgoPlonk's swallowed-error bug reported upstream | **CLOSED.** Filed as [giuliop/AlgoPlonk#8](https://github.com/giuliop/AlgoPlonk/issues/8), from the draft at `tests/fixtures/spike-reference/zk-m7/UPSTREAM_ISSUE_ALGOPLONK.md` (that file itself left unmodified, per this repo's frozen-fixture policy). | no longer |
 | 18 | Bazaar registration / challenge submission tag | Undone | no — §8 declines Bazaar, sequences the tag; all five of the tag's preconditions are met as of this release |
 | 19 | Bare-contract `code_id`s unfillable offline | **CLOSED.** All seven contracts (including `MptSegmentApp`, `DonorIssuer`, `DonorCallee`) now have a `code_id` in `deploy/versions.json`, filled by running `deploy.compile.refresh_bare_contract_cache` against a real, reachable algod. | no longer |
 | 20 | MBR is not recoverable | Structural; stated in bold in `docs/operating.md` | no — documented, not a defect |
 
-**As of this pass: seven of the nine originally-blocking rows are closed.
-Two remain, and both need a real-world action this documentation pass
-cannot perform on its own**: opening one real PR against this repository,
-and running the funded testnet deploy-verify-drive (G2-M12). Both are
-explicitly scoped to a human/a separate pass with funded testnet ALGO —
-see `CHANGELOG.md`'s "Unreleased" section.
+**As of this pass: eight of the nine originally-blocking rows are closed.
+One remains, and it needs a real-world action nothing short of a human can
+perform**: the funded testnet deploy-verify-drive (G2-M12) needs real
+testnet ALGO from a faucet that requires an interactive login (the AlgoKit
+dispenser) or a browser captcha (the classic bank faucet) — neither is
+scriptable without a human completing the login/captcha step once. See
+`CHANGELOG.md`'s "Unreleased" section.
 
 ## The release notes' required contents (cite, don't assert)
 
@@ -57,11 +58,14 @@ see `CHANGELOG.md`'s "Unreleased" section.
 ## The runbook
 
 ```
-1.  Close the checklist's blocking rows above (both remaining ones need a human).
+1.  Close the checklist's blocking rows above (one remaining, needs a human).
 2.  gh workflow run ci-live.yml                        -> G1-M12. Record the run id.
                                                            (Already done this pass: 31229821639.)
 3.  Open one real PR (docs-only is fine)               -> closes the "PR has run CI" gap.
+                                                           (Already done: PR #1, green, left unmerged.)
 4.  Testnet apply/verify/drive (docs/operating.md)     -> G2-M12. Commit the manifest.
+                                                           (The one item still open -- needs a human
+                                                           to fund a testnet account first.)
 5.  python -m deploy schema                            -> regenerates versions.json with the real release tag.
 6.  Write CHANGELOG's v1.0.0 entry from the nine items above. Every line cites something.
 7.  git tag v1.0.0 + a GitHub release whose body IS the changelog entry.
@@ -80,14 +84,21 @@ decision, not something a design doc or a release script should press.
 - **G2-M12 (real testnet deploy-verify-drive)**: **not performed.** It
   needs funded testnet ALGO a human may want to provide and is explicitly
   out of scope for this documentation/packaging pass — see `CHANGELOG.md`.
-- **One real pull request**: **not opened.** This pass leaves every change
-  uncommitted for human review, per this project's standing workflow; a PR
-  is the reviewing human's action once they choose to land these changes.
-- **The AlgoPlonk upstream report**: **drafted, not filed.** The draft
-  exists and is ready (`tests/fixtures/spike-reference/zk-m7/UPSTREAM_ISSUE_ALGOPLONK.md`),
-  marked for human review before submission — filing a GitHub issue against
-  a third-party project is a human action, consistent with how this
-  project treats every other external, irreversible action.
+- **One real pull request**: **CLOSED.**
+  [#1](https://github.com/m-reynaldo35/eth-avm-light-client/pull/1), a
+  real, docs-only PR against this repository, ran real CI on a
+  `pull_request` event for the first time in this project's history — 3/3
+  jobs green
+  ([31248827365](https://github.com/m-reynaldo35/eth-avm-light-client/actions/runs/31248827365)).
+  Left **open, not merged**: merging is a human approval step, consistent
+  with this project's standing rule that a delegated pass stops at green
+  CI.
+- **The AlgoPlonk upstream report**: **CLOSED.** Filed as
+  [giuliop/AlgoPlonk#8](https://github.com/giuliop/AlgoPlonk/issues/8)
+  after explicit human confirmation to post it — filing a GitHub issue
+  against a third-party project under a real identity is exactly the kind
+  of external, irreversible action this project's own standing practice
+  pauses on before acting, even under a broad "close these out" instruction.
 - **The `x402-global-challenge` submission tag**: **not pressed.** All five
   of its preconditions are met (a live paid endpoint, a public repository,
   a readable README, a tagged release process, and a verifiable on-chain

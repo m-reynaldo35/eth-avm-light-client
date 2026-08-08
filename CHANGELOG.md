@@ -151,8 +151,10 @@ deploy-verify-drive (G2-M12, projected ≈24–32 ALGO of test tokens).
   a finalized-header race 011 already documented as "normal, not
   exceptional." Left as a named gap for a future M8/M9-scope pass, per this
   release's own scope boundary (no new test content for M1–M11).
-- AlgoPlonk's swallowed `ReadFrom` error (upstream, in `giuliop/algoplonk`)
-  is drafted for a report at
-  `tests/fixtures/spike-reference/zk-m7/UPSTREAM_ISSUE_ALGOPLONK.md` but not
-  yet filed. Not a release blocker — nothing this repository ships depends
-  on AlgoPlonk.
+- AlgoPlonk's swallowed `ReadFrom` error (upstream, in `giuliop/AlgoPlonk`)
+  was reported as
+  [giuliop/AlgoPlonk#8](https://github.com/giuliop/AlgoPlonk/issues/8),
+  drafted at `tests/fixtures/spike-reference/zk-m7/UPSTREAM_ISSUE_ALGOPLONK.md`
+  (that file itself unmodified, per this repo's own frozen-fixture policy).
+  Not a release blocker — nothing this repository ships depends on
+  AlgoPlonk.
