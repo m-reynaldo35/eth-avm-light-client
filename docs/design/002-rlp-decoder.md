@@ -402,15 +402,20 @@ the healthy end state.
 blocker.** M7's blocker is *hashing*: a receipts-trie leaf embeds the whole
 receipt, 9 of the 137 receipts in the spike's real test block RLP-encode past
 4096 B (max **157,274 B**), `keccak256` takes a single ≤4096 B stack value, and
-the AVM has no streaming/incremental hash opcode. So M7 **cannot materialise or
-hash that leaf at all**, with or without a chunk-reading decoder — it needs a
-structural answer (a sub-commitment, a different trust route to the log, a
-re-hash proven elsewhere). Until that structure is chosen, we do not know which
-ranges M7 will read or in what order, so any reader interface designed today is
-a guess. `MPT_RESULTS.md` §5.3 says exactly this ("naive log proofs are
-infeasible … without restructuring"), and `ROADMAP.md` already flags M7 as a
-hard-stop design review that "may force revision of M2". Guessing now buys
-nothing and costs a wrong guess.
+the AVM has no streaming/incremental hash opcode. So M7 **cannot materialise it,
+and cannot hash it with the `keccak256` opcode; software hashing is possible at
+109.2 budget/byte (007 §2.4)** [**amended, 012 §5.4 row 1 / 007 §10**: the
+original text here read "cannot materialise or hash that leaf at all", which
+was true for the opcode but overstated the structural blocker — a software
+sponge does the hash, just at real, measured, non-naive cost], with or without
+a chunk-reading decoder — it needs a structural answer (a sub-commitment, a
+different trust route to the log, a re-hash proven elsewhere). Until that
+structure is chosen, we do not know which ranges M7 will read or in what
+order, so any reader interface designed today is a guess. `MPT_RESULTS.md`
+§5.3 says exactly this ("naive log proofs are infeasible … without
+restructuring"), and `ROADMAP.md` already flags M7 as a hard-stop design
+review that "may force revision of M2". Guessing now buys nothing and costs a
+wrong guess. M2's own decision here is unaffected by this correction.
 
 **(b) The unbounded object is a leaf *value*, never a node *structure*.** This
 decomposition matters and it holds structurally, not just in the fixtures. A

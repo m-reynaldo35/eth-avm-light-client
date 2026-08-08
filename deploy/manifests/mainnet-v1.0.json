@@ -1,0 +1,34 @@
+{
+  "apps": {
+    "donor_callee": {
+      "app_id": 3666047587,
+      "approval_sha256": "ed90f0d2da1f1d1abd773c45230651a292a90edbc12a7bf859a493a12a640ce7",
+      "clear_sha256": "ed90f0d2da1f1d1abd773c45230651a292a90edbc12a7bf859a493a12a640ce7",
+      "created_at_round": 63837792,
+      "creator": "6XP7MJKMEPSCZ46RPB42FFRQGF7U5ACXLCXNCXWAVJUSP5J7U3ZFWBRIFQ",
+      "schema_version": 1
+    },
+    "donor_issuer": {
+      "app_id": 3666047636,
+      "approval_sha256": "e9a262c034240536a1fc65f5fd832d032b4e21984219d9b9792f607d2a8e13fd",
+      "clear_sha256": "ed90f0d2da1f1d1abd773c45230651a292a90edbc12a7bf859a493a12a640ce7",
+      "created_at_round": 63837794,
+      "creator": "6XP7MJKMEPSCZ46RPB42FFRQGF7U5ACXLCXNCXWAVJUSP5J7U3ZFWBRIFQ",
+      "schema_version": 1
+    },
+    "m7": {
+      "app_id": 3665914633,
+      "approval_sha256": "f7a846ff33314d8f9ecc48e85584327f13e9cb808a3650b30e69339c7fcdc9d2",
+      "clear_sha256": "ed90f0d2da1f1d1abd773c45230651a292a90edbc12a7bf859a493a12a640ce7",
+      "created_at_round": 63833882,
+      "creator": "6XP7MJKMEPSCZ46RPB42FFRQGF7U5ACXLCXNCXWAVJUSP5J7U3ZFWBRIFQ",
+      "schema_version": 1,
+      "t2_float_microalgo": 100000
+    }
+  },
+  "manifest_version": 1,
+  "network": {
+    "genesis_hash": "wGHE2Pwdvd7S12BL5FaOP20EGYesN73ktiC1qzkkit8=",
+    "genesis_id": "mainnet-v1.0"
+  }
+}

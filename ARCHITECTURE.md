@@ -55,10 +55,17 @@ overhead, and that a naive doc reading can be off by 2x (see
 ## Contract versioning
 
 Versioning is gated by AVM/consensus-protocol compatibility, not plain
-semver — a contract version implicitly targets a specific AVM version and a
-specific set of supported Ethereum forks (Altair/Capella/Deneb field
-layouts). This gets a concrete policy in M12's design doc once the supported
-fork range is known from M3/M4.
+semver: three axes (AVM/protocol, consensus fork, proof system), identified
+by the approval-program SHA-256 that CI already computes and diffs per PR —
+never a hand-typed number (docs/design/012-docs-packaging-release.md §3).
+The real supported Ethereum fork range is **Deneb, Electra, Fulu**
+(`deploy/forks.py::FORK_FIELD_COUNTS`) — correcting this section's earlier
+guess of "Altair/Capella/Deneb" — with **Gloas explicitly excluded** per
+contract, for two different measured reasons (a budget ceiling for M4, a
+hard argument-size cap for M8). See
+[`docs/versioning.md`](./docs/versioning.md) for the full scheme, the
+per-contract fork decision table, and the standing 1,212-byte M4 bytecode
+headroom.
 
 ## CI: two workflows from commit one
 
@@ -68,6 +75,12 @@ fork range is known from M3/M4.
   container (same recipe as the spike's `README.md`) and hits public
   Ethereum RPC, mirroring the spike's real-data validation style. Must be run
   manually and pass before any module is marked "Released" in `ROADMAP.md`.
+  A "Released" claim must **cite the run id** it passed on, not merely
+  assert that one exists (docs/design/011-test-harness-ci.md §15.4 item 2;
+  the first real, green run of this workflow's real body was G1-M12, run
+  [31229821639](https://github.com/m-reynaldo35/eth-avm-light-client/actions/runs/31229821639)
+  — every scheduled run before it had executed only the scaffold placeholder
+  commit, docs/design/012-docs-packaging-release.md §0).
 
 Module M11 owns ratifying and extending this policy as the test surface
 grows.

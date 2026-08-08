@@ -7,6 +7,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from pathlib import Path
 
 
 def _algod_client(target):
@@ -91,6 +92,40 @@ def cmd_inspect(args):
         print(f"no {args.app!r} entry in manifest", file=sys.stderr)
         return 1
     app_id = entry["app_id"]
+
+    if args.forks:
+        # 012 §3.5 layer 1: decode the on-chain fork table through the
+        # already-existing `_read_fork_rows` (deploy/plans/m4.py,
+        # deploy/plans/m8.py) -- this flag is the only thing that was
+        # missing to reach them from the CLI.
+        if args.app == "m4":
+            from deploy.plans.m4 import _read_fork_rows
+
+            rows = _read_fork_rows(algod_client, app_id)
+            decoded = [
+                {
+                    "activation_epoch": r[0], "fork_version": r[1].hex(),
+                    "finality_gindex": r[2], "current_sc_gindex": r[3], "next_sc_gindex": r[4],
+                }
+                for r in rows
+            ]
+        elif args.app == "m8":
+            from deploy.plans.m8 import _read_fork_rows
+
+            rows = _read_fork_rows(algod_client, app_id)
+            decoded = [
+                {
+                    "activation_epoch": r[0], "g_state_root": r[1], "g_receipts_root": r[2],
+                    "g_block_number": r[3], "g_block_roots_base": r[4],
+                }
+                for r in rows
+            ]
+        else:
+            print(f"--forks is only meaningful for m4/m8 (got --app {args.app!r})", file=sys.stderr)
+            return 1
+        print(json.dumps({"app_id": app_id, "fork_rows": decoded}, indent=2, sort_keys=True))
+        return 0
+
     gs = inspect_mod.decode_global_state(algod_client, app_id)
     bal = inspect_mod.account_balance(algod_client, app_id)
     out = {"app_id": app_id, "global_state": {k: (v.hex() if isinstance(v, bytes) else v) for k, v in gs.items()},
@@ -100,6 +135,39 @@ def cmd_inspect(args):
         out["boxes"] = [b.hex() for b in boxes]
     print(json.dumps(out, indent=2, sort_keys=True))
     return 0
+
+
+def cmd_resolve(args):
+    """012 §3.5: read-only, no signer. Loads `deploy/targets/<network>.json`
+    (never a raw --target path -- `resolve` is the one verb whose whole
+    point is that a stranger only needs to know a network NAME, not a file
+    path into a checkout they may not have)."""
+    from deploy.manifest import Manifest
+    from deploy.resolve import VERDICT_CODE_MISMATCH, resolve
+
+    target_path = Path(__file__).resolve().parent / "targets" / f"{args.network}.json"
+    if not target_path.exists():
+        print(f"no target file for network {args.network!r} ({target_path})", file=sys.stderr)
+        return 1
+    target = _load_target(target_path)
+    algod_client = _algod_client(target)
+    manifest = Manifest.load(target.network.genesis_id)
+
+    versions_path = Path(__file__).resolve().parent / "versions.json"
+    versions = json.loads(versions_path.read_text()) if versions_path.exists() else {"contracts": {}}
+
+    result = resolve(target, manifest, versions, args.fork, algod_client)
+
+    if args.json:
+        print(json.dumps(result, indent=2, sort_keys=True))
+    else:
+        for name, v in result["apps"].items():
+            suffix = f" ({v['detail']})" if v.get("detail") else ""
+            print(f"{name}: {v['verdict']}{suffix}")
+        print(f"donors: issuer={result['donors']['issuer']} callee={result['donors']['callee']}")
+
+    any_mismatch = any(v["verdict"] == VERDICT_CODE_MISMATCH for v in result["apps"].values())
+    return 1 if any_mismatch else 0
 
 
 def cmd_schema(args):
@@ -196,49 +264,107 @@ def cmd_renounce(args):
 
 
 def build_parser() -> argparse.ArgumentParser:
-    p = argparse.ArgumentParser(prog="python -m deploy")
+    p = argparse.ArgumentParser(
+        prog="python -m deploy",
+        description=(
+            "Source-checkout deployment tool for the ETH-AVM light client's Algorand "
+            "contracts (docs/design/010-deployment-tooling.md). Not published as a wheel "
+            "(docs/quickstart.md) -- needs a checkout, puyapy, and the 'contracts' extra."
+        ),
+        epilog=(
+            "Every verb needs a reachable algod except 'resolve' and 'schema', which are "
+            "also usable with no signer configured. See docs/operating.md for the full "
+            "walkthrough and docs/versioning.md for what 'resolve' answers."
+        ),
+    )
     sub = p.add_subparsers(dest="command", required=True)
 
-    p_plan = sub.add_parser("plan")
-    p_plan.add_argument("--target", required=True)
+    p_plan = sub.add_parser(
+        "plan", help="show what 'apply' would do against --target, with no signer needed",
+        description="Read-only: diffs --target's declared contracts against the manifest. Sends nothing.",
+    )
+    p_plan.add_argument("--target", required=True, help="path to a deploy/targets/*.json file")
     p_plan.set_defaults(func=cmd_plan)
 
-    p_apply = sub.add_parser("apply")
-    p_apply.add_argument("--target", required=True)
-    p_apply.add_argument("--yes", action="store_true")
+    p_apply = sub.add_parser(
+        "apply", help="deploy/converge the contracts declared in --target (idempotent)",
+        description="Creates/updates every contract --target marks deploy=true. Re-running sends only the missing subset.",
+    )
+    p_apply.add_argument("--target", required=True, help="path to a deploy/targets/*.json file")
+    p_apply.add_argument("--yes", action="store_true", help="acknowledge the governance==signer warning (§9.3)")
     p_apply.set_defaults(func=cmd_apply)
 
-    p_verify = sub.add_parser("verify")
-    p_verify.add_argument("--target", required=True)
+    p_verify = sub.add_parser(
+        "verify", help="re-derive and check a deployment against its pinned approval hash, no signer",
+        description="For each app in the manifest: re-hashes the live approval program and compares it to the pin.",
+    )
+    p_verify.add_argument("--target", required=True, help="path to a deploy/targets/*.json file")
     p_verify.set_defaults(func=cmd_verify)
 
-    p_inspect = sub.add_parser("inspect")
-    p_inspect.add_argument("--target", required=True)
-    p_inspect.add_argument("--app", required=True)
-    p_inspect.add_argument("--boxes", action="store_true")
-    p_inspect.add_argument("--json", action="store_true")
+    p_inspect = sub.add_parser(
+        "inspect", help="decode a deployed app's real global state, boxes, or fork table",
+        description="Public reads only (application_info/application_boxes) -- auditable by someone who did not deploy it.",
+    )
+    p_inspect.add_argument("--target", required=True, help="path to a deploy/targets/*.json file")
+    p_inspect.add_argument("--app", required=True, choices=["m4", "m6", "m7", "m8", "donor_issuer", "donor_callee"],
+                            help="which manifest entry to inspect")
+    p_inspect.add_argument("--boxes", action="store_true", help="also list every box name (hex)")
+    p_inspect.add_argument("--forks", action="store_true",
+                            help="decode the on-chain fork table instead of global state (m4/m8 only, §3.5 layer 1)")
+    p_inspect.add_argument("--json", action="store_true", help="unused -- output is always JSON; kept for symmetry")
     p_inspect.set_defaults(func=cmd_inspect)
 
-    p_schema = sub.add_parser("schema")
-    p_schema.add_argument("--check", action="store_true")
+    p_resolve = sub.add_parser(
+        "resolve", help="which app id is usable for --network/--fork, and why (§3.5's three layers, tied together)",
+        description=(
+            "Read-only, no signer. Four verdicts: USABLE, NOT_DEPLOYED, FORK_UNSUPPORTED, "
+            "CODE_MISMATCH (exits non-zero on any CODE_MISMATCH)."
+        ),
+    )
+    p_resolve.add_argument("--network", required=True, choices=["mainnet", "testnet", "localnet"],
+                            help="selects deploy/targets/<network>.json and its manifest")
+    p_resolve.add_argument("--fork", required=True, help="e.g. deneb, electra, fulu, gloas")
+    p_resolve.add_argument("--json", action="store_true", help="print the full structured result, not just verdicts")
+    p_resolve.set_defaults(func=cmd_resolve)
+
+    p_schema = sub.add_parser(
+        "schema", help="(re)generate deploy/schema/*.json and deploy/versions.json from the contracts",
+        description="Never hand-typed (§17 item 4) -- reads contracts/**/constants.py and the compiled-artifact caches.",
+    )
+    p_schema.add_argument("--check", action="store_true", help="fail (exit 1) if any generated artifact would differ")
     p_schema.set_defaults(func=cmd_schema)
 
-    p_recover = sub.add_parser("recover")
-    p_recover.add_argument("--creator", required=True)
-    p_recover.add_argument("--algod-url", default="http://localhost:4051")
-    p_recover.add_argument("--pinned-json", default=None)
+    p_recover = sub.add_parser(
+        "recover", help="rebuild a lost manifest by scanning a creator's apps for a pinned approval hash",
+        description="No local state needed -- matches --creator's created-apps against --pinned-json's sha256 map.",
+    )
+    p_recover.add_argument("--creator", required=True, help="the deployer address to scan created-apps for")
+    p_recover.add_argument("--algod-url", default="http://localhost:4051", help="algod to query (default: localnet)")
+    p_recover.add_argument("--pinned-json", default=None, help='JSON string: {"contract_name": "sha256hex", ...}')
     p_recover.set_defaults(func=cmd_recover)
 
-    p_fund = sub.add_parser("fund")
-    p_fund.add_argument("--target", required=True)
-    p_fund.add_argument("--app", required=True)
-    p_fund.add_argument("--stage", choices=["install", "rollover"], default=None)
-    p_fund.add_argument("--target-microalgo", type=int, default=None)
+    p_fund = sub.add_parser(
+        "fund", help="top up an already-deployed app's balance (e.g. before an M9 install session)",
+        description="Explicit and separate from 'apply' by design (§5.2) -- funding a stage is an operator decision.",
+    )
+    p_fund.add_argument("--target", required=True, help="path to a deploy/targets/*.json file")
+    p_fund.add_argument("--app", required=True, help="manifest entry to fund")
+    p_fund.add_argument("--stage", choices=["install", "rollover"], default=None,
+                         help="m4-only: a named funding recipe from §4.1's MBR table")
+    p_fund.add_argument("--target-microalgo", type=int, default=None,
+                         help="fund to exactly this balance (required unless --stage is given)")
     p_fund.set_defaults(func=cmd_fund)
 
-    p_renounce = sub.add_parser("renounce")
-    p_renounce.add_argument("--app-id", type=int, required=True)
-    p_renounce.add_argument("--target", required=False, default=None)
+    p_renounce = sub.add_parser(
+        "renounce", help="PERMANENTLY remove governance from a TrustedRootAnchor deployment",
+        description=(
+            "Interactive only -- no --yes exists for this command. Prints the migration cost table, "
+            "requires a typed app-id confirmation, then submits the real renounce() call."
+        ),
+    )
+    p_renounce.add_argument("--app-id", type=int, required=True, help="the TrustedRootAnchor app id to renounce")
+    p_renounce.add_argument("--target", required=False, default=None,
+                             help="path to a deploy/targets/*.json file (required to actually submit)")
     p_renounce.set_defaults(func=cmd_renounce)
 
     return p

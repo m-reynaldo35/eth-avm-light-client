@@ -3,6 +3,11 @@ __pycache__/
 .pytest_cache/
 *.egg-info/
 
+# `python -m build` output (012 §12.2's Suite W builds into tmp dirs, not
+# here, but a manual `python -m build` from the repo root drops these).
+/build/
+/dist/
+
 # Puya compiled output (recompiled by tests/bench harnesses on demand)
 _build/
 _build_mpt/

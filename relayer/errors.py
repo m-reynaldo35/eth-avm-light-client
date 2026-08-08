@@ -63,3 +63,15 @@ class RelayerBug(RelayerError):
     always a relayer bug (withheld nodes), never a receipt fact."""
 
     retryability = Retryability.FATAL
+
+
+class MissingContractsSource(RelayerError):
+    """012 §4.2/§9 item 5/§17 item 19: raised, NEVER a bare
+    `FileNotFoundError`, when `prove_receipt(against_anchor=True)` or
+    `deploy_donor_pair` is reached from an installed wheel that has no
+    `contracts/` source tree next to it. This is a structural limit of the
+    published `eth-avm-relayer` distribution (only `relayer/` ships, §4.2) --
+    not a bug to retry. `docs/quickstart.md` documents the checkout path
+    that avoids it."""
+
+    retryability = Retryability.FATAL

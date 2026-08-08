@@ -6,6 +6,18 @@ build-backend = "setuptools.build_meta"
 name = "eth-avm-relayer"
 version = "0.1.0"
 description = "M9: off-chain relayer/client for the ETH-AVM light client project (docs/design/009-relayer-client.md)."
+readme = "README.md"
+license = { text = "MIT" }
+authors = [{ name = "m-reynaldo35" }]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development :: Libraries",
+]
 # Raised from ">=3.10" (011 §7.3/§16 gap 7/§18 item 4): >=3.10 was NEVER run
 # by CI (both workflows were scaffold placeholders, see docs/design/
 # 011-test-harness-ci.md §0) and this pass measures every real number in
@@ -13,27 +25,26 @@ description = "M9: off-chain relayer/client for the ETH-AVM light client project
 # matrix (3.12, 3.13) actually runs, and `tests/harness/quarantine.py` needs
 # stdlib `tomllib` (3.11+). MUST NOT ship a floor CI does not run (§18 item 4).
 requires-python = ">=3.12"
+# 012 §4.1: this used to also list fastapi/uvicorn/x402-avm -- measured to
+# pull 59 packages total via `pip install --dry-run --report`, 40 of them
+# (sentry-sdk, fastapi-cloud-cli, etc.) forbidden by relayer/'s own G8-M9
+# import-purity test. Only these four are what `relayer/` actually imports;
+# the service-only three now live in the `service` extra below (option A,
+# §4.1). Measured with only these four: 19 packages.
 dependencies = [
     "py-algorand-sdk",
     "rlp",
     "pycryptodome",
     "py_ecc",
-    # fastapi/uvicorn/x402-avm below are service/x402_endpoint's own deps, not
-    # relayer's -- relayer/ still imports none of them (G8-M9's AST-enforced
-    # import-purity test covers this). They live in THIS list, not just
-    # service/x402_endpoint/requirements.txt, because Vercel's Python/FastAPI
-    # builder resolves dependencies from pyproject.toml exclusively once
-    # [tool.vercel] is present -- requirements.txt is silently ignored for
-    # the deployed build (confirmed live, 2026-08-07: a deploy with these
-    # three only in requirements.txt installed py-algorand-sdk/rlp/
-    # pycryptodome/py_ecc and NOTHING else, and `main.py`'s own `import
-    # fastapi` crashed the function immediately). requirements.txt is kept
-    # for local/non-Vercel installs and must be updated in step with this
-    # list.
-    "fastapi",
-    "uvicorn[standard]",
-    "x402-avm[fastapi,avm]",
 ]
+
+[project.urls]
+Repository = "https://github.com/m-reynaldo35/eth-avm-light-client"
+Documentation = "https://github.com/m-reynaldo35/eth-avm-light-client/tree/main/docs"
+Changelog = "https://github.com/m-reynaldo35/eth-avm-light-client/blob/main/CHANGELOG.md"
+
+[project.scripts]
+eth-avm-relayer = "relayer.cli:main"
 
 # Only `relayer` is a distributable package today (docs/design/009-relayer-client.md
 # §17) -- `contracts`, `tests`, `bench`, `deploy` are this repo's own
@@ -87,6 +98,28 @@ contracts = [
     # ci-live.yml's own first real execution (run 31228946039):
     # FileNotFoundError: [Errno 2] No such file or directory: 'algokit'.
     "algokit>=2.10,<3",
+]
+
+# 012 §4.1 option A: `service/x402_endpoint`'s own dependencies, moved out of
+# `[project.dependencies]` so a plain `pip install eth-avm-relayer` no longer
+# drags in fastapi/uvicorn/x402-avm's transitive closure (sentry-sdk,
+# fastapi-cloud-cli, uvloop, typer, rich, ... -- 40 packages `relayer/`'s own
+# G8-M9 import-purity test forbids it from ever importing). `relayer/` itself
+# still imports none of these (unchanged). Vercel's Python/FastAPI builder
+# resolves dependencies from THIS file exclusively once [tool.vercel] is
+# present (confirmed live, 2026-08-07, pyproject.toml's prior comment) --
+# whether it honours an EXTRA (`.[service]`) rather than only
+# `[project.dependencies]` is unmeasured at design time (012 §4.1/§9 item 6)
+# and must be settled by one real redeploy before this split can be
+# considered closed for the live service, not just for the published wheel.
+# Fallback if it does not: 012 §4.1 option B, a second, minimal
+# `packaging/library/pyproject.toml` declaring only the four real deps, used
+# to build the PUBLISHED wheel while this root file stays exactly as it is
+# for Vercel. Not implemented unless the redeploy proves it necessary.
+service = [
+    "fastapi",
+    "uvicorn[standard]",
+    "x402-avm[fastapi,avm]",
 ]
 
 # §7.2: `--strict-markers` so a typo'd marker is a collection error, not a

@@ -1,0 +1,15 @@
+{
+  "approval_bytes": 48,
+  "approval_bytes_b64": "CyACAQAxGEAAAiJDNhoAFzYaARcjSUsDDEEAErFLAbIYgQayECOyAbMiCEL/5yJD",
+  "approval_sha256": "e9a262c034240536a1fc65f5fd832d032b4e21984219d9b9792f607d2a8e13fd",
+  "approval_teal_sha256": "fceceff4b22c5ff74350c779e77bd3491594b9cdc4132bbb00d208d6653d2c6b",
+  "avm_version": 10,
+  "clear_bytes": 4,
+  "clear_bytes_b64": "C4EBQw==",
+  "clear_sha256": "ed90f0d2da1f1d1abd773c45230651a292a90edbc12a7bf859a493a12a640ce7",
+  "clear_teal_sha256": "9e2d0c573e6dac88d701bcd99ab2b64d33a71a5412ca54e1ba809a13e06b49f4",
+  "contract": "DonorIssuer",
+  "on_completion_gate": "unrestricted",
+  "puyapy_version": "5.9.0",
+  "source": "contracts/sync_committee/bench_app.py"
+}

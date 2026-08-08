@@ -43,12 +43,20 @@ def test_c2_arc56_artifacts_reproduce_byte_identically():
 
 
 # ---------------------------------------------------------------------------
-# C-3: the bare-contract TEAL sha256 (both approval and clear, both
-# contracts -- "all four bare-contract TEAL hashes", §18 item 16) match
-# `deploy/schema/_compiled/`.
+# C-3: the bare-contract TEAL sha256 (both approval and clear, every bare
+# contract with a cached artifact -- "all four bare-contract TEAL hashes",
+# §18 item 16) match `deploy/schema/_compiled/`.
+#
+# 012 §3.4/§15 gap 5: `BARE_CONTRACT_SOURCES` grew from 2 to 5 entries this
+# pass (`MptSegmentApp`, `DonorIssuer`, `DonorCallee` added, and their
+# compiled-artifact cache filled by running `refresh_bare_contract_cache`
+# against a real, reachable algod) -- closing the "3 of 7 code_ids
+# unfillable offline" gap `deploy/versions.json` used to have to record.
 # ---------------------------------------------------------------------------
 def test_c3_bare_contract_teal_hashes_match_cache():
-    assert set(BARE_CONTRACT_SOURCES) == {"Mpt6ComposerApp", "Mpt7ReceiptApp"}
+    assert set(BARE_CONTRACT_SOURCES) == {
+        "Mpt6ComposerApp", "Mpt7ReceiptApp", "MptSegmentApp", "DonorIssuer", "DonorCallee",
+    }
     checked = 0
     for name, src in BARE_CONTRACT_SOURCES.items():
         contracts = puya_compile(src)
@@ -57,7 +65,7 @@ def test_c3_bare_contract_teal_hashes_match_cache():
         assert sha256_hex(entry["approval"].encode()) == cache["approval_teal_sha256"]
         assert sha256_hex(entry["clear"].encode()) == cache["clear_teal_sha256"]
         checked += 2
-    assert checked == 4, "expected all four bare-contract TEAL hashes (2 contracts x 2 programs)"
+    assert checked == 10, "expected all ten bare-contract TEAL hashes (5 contracts x 2 programs)"
 
 
 # ---------------------------------------------------------------------------

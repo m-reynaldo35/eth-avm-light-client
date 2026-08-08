@@ -131,6 +131,14 @@ def patched_repo_copy(anchor_app_id: int) -> Path:
 BARE_CONTRACT_SOURCES = {
     "Mpt6ComposerApp": REPO_ROOT / "contracts" / "composer" / "bench_app.py",
     "Mpt7ReceiptApp": REPO_ROOT / "contracts" / "receipt" / "bench_app.py",
+    # M12 §3.4's "two gaps in the generator's current coverage": these three
+    # had no pinned compiled artifact because closing them needs a reachable
+    # algod's /v2/teal/compile (module docstring's "honest asymmetry"), not
+    # because they are out of scope. Filled once a live algod was reachable
+    # (docs/design/012-docs-packaging-release.md §15 gap 5).
+    "MptSegmentApp": REPO_ROOT / "contracts" / "mpt" / "bench_app.py",
+    "DonorIssuer": REPO_ROOT / "contracts" / "sync_committee" / "bench_app.py",
+    "DonorCallee": REPO_ROOT / "contracts" / "sync_committee" / "bench_app.py",
 }
 
 

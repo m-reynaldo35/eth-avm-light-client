@@ -393,6 +393,169 @@ def _dump(schema: dict) -> str:
     return json.dumps(schema, indent=2, sort_keys=True) + "\n"
 
 
+# ---------------------------------------------------------------------------
+# `deploy/versions.json` (design doc 012 §3.4-§3.6): the contract-versioning
+# artifact. Generated from the same schemas/caches above -- never hand-typed
+# (§17 item 4) -- and diffed by the same `deploy schema --check` gate.
+#
+# `versions.json` lives at `deploy/versions.json`, one level up from this
+# file's own `deploy/schema/` directory (012 §16's file layout).
+# ---------------------------------------------------------------------------
+VERSIONS_PATH = SCHEMA_DIR.parent / "versions.json"
+
+# Real mainnet fork range (deploy/forks.py::FORK_FIELD_COUNTS), 012 §14.2's
+# correction of ARCHITECTURE.md's original "Altair/Capella/Deneb" guess.
+FORK_SUPPORTED = ["deneb", "electra", "fulu"]
+FORK_UNSUPPORTED = ["gloas"]
+
+# Cited reasons (012 §3.4's own example, verbatim) -- each names a real
+# section, not a shrug (§3.4 property 2).
+M8_GLOAS_REASON = (
+    "008 NG3 / §10.5: a depth-11 EL branch pushes HISTORICAL's argument payload over "
+    "the 2,048 B cap. O-M8-4, not approved."
+)
+M4_GLOAS_REASON = (
+    "004 §4.5 normative: the Gloas row MUST NOT be appended until its gindices are "
+    "confirmed against vendored Gloas vectors; 003 §2.6 measures a depth-11 branch at "
+    "738 > the 700 single-call limit, so group sizing must change too."
+)
+
+# 012 §0: the first real, green `ci-live.yml` run in this project's history
+# (G1-M12) -- cited here as the AVM axis's evidence, alongside the pinned
+# ALGOD_IMAGE digest comment in the workflow file itself.
+CI_LIVE_G1_M12_RUN_ID = "31229821639"
+
+
+def _existing_release() -> str | None:
+    """`release` is the ONE hand-set field in versions.json (012 §3.4
+    property 3) -- set once, at tag time, by the release runbook
+    (docs/release.md). Regenerating the file must carry it forward
+    unchanged; every other field is derived fresh below."""
+    if not VERSIONS_PATH.exists():
+        return None
+    try:
+        return json.loads(VERSIONS_PATH.read_text()).get("release")
+    except (json.JSONDecodeError, OSError):
+        return None
+
+
+def generate_versions() -> dict:
+    schemas = generate_all()
+    m4, m8 = schemas["SyncCommitteeVerifier"], schemas["TrustedRootAnchor"]
+    m7, m6 = schemas["Mpt7ReceiptApp"], schemas["Mpt6ComposerApp"]
+
+    contracts = {
+        "TrustedRootAnchor": {
+            "code_id": m8["program"]["approval_sha256"],
+            "approval_bytes": m8["program"]["approval_bytes"],
+            "source": m8["source"],
+            "design_doc": m8["design_doc"],
+            "fork_axis": "table",
+            "code_window": {
+                "supported": list(FORK_SUPPORTED),
+                "unsupported": list(FORK_UNSUPPORTED),
+                "reason": M8_GLOAS_REASON,
+                "table_capacity_rows": 8,
+            },
+            "consumers_bound_at_compile_time": True,  # TP-M8-4
+            "redeploy_cascades_to": ["every M8 consumer"],
+        },
+        "SyncCommitteeVerifier": {
+            "code_id": m4["program"]["approval_sha256"],
+            "approval_bytes": m4["program"]["approval_bytes"],
+            # 010 §4.6/010:577, promoted to a standing versioning constraint
+            # by 012 §3.3: how much room a future fork's CODE change has
+            # before it fits nowhere and cascades into M8 and every consumer.
+            "bytecode_cap_headroom_bytes": 8192 - m4["program"]["approval_bytes"],
+            "source": m4["source"],
+            "design_doc": m4["design_doc"],
+            "fork_axis": "table",
+            "code_window": {
+                "supported": list(FORK_SUPPORTED),
+                "unsupported": list(FORK_UNSUPPORTED),
+                "reason": M4_GLOAS_REASON,
+                "table_capacity_rows": 16,
+            },
+        },
+        "Mpt7ReceiptApp": {
+            "code_id": m7["program"]["approval_sha256"],
+            "approval_bytes": m7["program"]["approval_bytes"],
+            "source": m7["source"],
+            "design_doc": m7["design_doc"],
+            # M2/M5/M6/M7 version on AVM only (003 §9, adopted+extended by
+            # 012 §3.2): execution-layer RLP/MPT encodings move with no
+            # consensus fork.
+            "fork_axis": "none",
+            "tiers": ["T1", "T2"],
+            "proof_system": None,  # axis C, empty in v1 -- no T3 prover ships (§1.2 item 3)
+        },
+        "Mpt6ComposerApp": {
+            "code_id": m6["program"]["approval_sha256"],
+            "approval_bytes": m6["program"]["approval_bytes"],
+            "source": m6["source"],
+            "design_doc": m6["design_doc"],
+            "fork_axis": "none",
+        },
+    }
+
+    # 012 §3.4's "two gaps": MptSegmentApp and the donor pair have no
+    # ARC-56 artifact (bare `Contract`s) and previously had no compiled-
+    # artifact cache either, so their code_id could not be filled offline
+    # (§15 gap 5). Closed this pass by running
+    # `deploy.compile.refresh_bare_contract_cache` against a real, reachable
+    # algod (mainnet-api.algonode.cloud's public /v2/teal/compile) -- no
+    # signer, no deployment, just a real compile of already-public source.
+    for name in ("MptSegmentApp", "DonorIssuer", "DonorCallee"):
+        try:
+            cache = load_bare_contract_cache(name)
+        except FileNotFoundError:
+            contracts[name] = {
+                "code_id": None,
+                "fork_axis": "none",
+                "note": (
+                    "no compiled-artifact cache -- run "
+                    "deploy.compile.refresh_bare_contract_cache against a live algod "
+                    "(012 §3.4/§15 gap 5)"
+                ),
+            }
+            continue
+        contracts[name] = {
+            "code_id": cache["approval_sha256"],
+            "approval_bytes": cache["approval_bytes"],
+            "source": cache["source"],
+            "fork_axis": "none",
+        }
+
+    return {
+        "versions_version": 1,
+        "release": _existing_release(),
+        "generated_by": "python -m deploy schema",
+        "avm": {
+            "version": m4["program"]["avm_version"],
+            "measured_against": "go-algorand 4.7.4 (91cbddcd, rel/stable)",
+            "evidence": (
+                ".github/workflows/ci-live.yml ALGOD_IMAGE digest comment; "
+                f"ci-live run {CI_LIVE_G1_M12_RUN_ID} (first real green run, G1-M12, "
+                "docs/design/012-docs-packaging-release.md §0)"
+            ),
+        },
+        "contracts": contracts,
+    }
+
+
+def write_versions() -> Path:
+    VERSIONS_PATH.write_text(_dump(generate_versions()))
+    return VERSIONS_PATH
+
+
+def check_versions() -> bool:
+    """True if `deploy/versions.json` is byte-identical to a fresh
+    regeneration (G3-M12)."""
+    if not VERSIONS_PATH.exists():
+        return False
+    return VERSIONS_PATH.read_text() == _dump(generate_versions())
+
+
 def write_all(out_dir: Path | None = None) -> list[Path]:
     out_dir = out_dir or SCHEMA_DIR
     written = []
@@ -400,13 +563,15 @@ def write_all(out_dir: Path | None = None) -> list[Path]:
         path = out_dir / f"{name}.schema.json"
         path.write_text(_dump(schema))
         written.append(path)
+    written.append(write_versions())
     return written
 
 
 def check(out_dir: Path | None = None) -> list[str]:
-    """§3.4's CI gate (G3-M10): regenerate every artifact in memory and diff
-    against the committed files. Returns a list of mismatching contract
-    names (empty = clean)."""
+    """§3.4's CI gate (G3-M10, extended by G3-M12): regenerate every
+    artifact in memory and diff against the committed files, including
+    `deploy/versions.json`. Returns a list of mismatching contract names
+    (empty = clean)."""
     out_dir = out_dir or SCHEMA_DIR
     mismatches = []
     for name, schema in generate_all().items():
@@ -414,6 +579,8 @@ def check(out_dir: Path | None = None) -> list[str]:
         expected = _dump(schema)
         if not path.exists() or path.read_text() != expected:
             mismatches.append(name)
+    if not check_versions():
+        mismatches.append("versions.json")
     return mismatches
 
 

@@ -163,10 +163,18 @@ def _normalize_requirement(req: str) -> str:
 
 
 def test_f5_requirements_txt_matches_pyproject_dependencies():
+    """012 §4.1: the three service-only deps (`fastapi`, `uvicorn[standard]`,
+    `x402-avm[fastapi,avm]`) moved out of `[project.dependencies]` into a
+    `service` extra, so a plain `pip install eth-avm-relayer` no longer
+    drags them in (measured: 59 packages before the split, ~20 after).
+    `service/x402_endpoint/requirements.txt` -- which Vercel does NOT
+    actually read (module comment, confirmed live) but which local/
+    non-Vercel installs do -- must still agree with the UNION of core deps
+    and the `service` extra, not just core deps alone."""
     pyproject = tomllib.loads(PYPROJECT_TOML.read_text())
-    pyproject_deps = {
-        _normalize_requirement(d) for d in pyproject["project"]["dependencies"]
-    }
+    core = pyproject["project"]["dependencies"]
+    service_extra = pyproject["project"]["optional-dependencies"]["service"]
+    pyproject_deps = {_normalize_requirement(d) for d in (*core, *service_extra)}
 
     req_lines = []
     for line in X402_REQUIREMENTS_TXT.read_text().splitlines():

@@ -59,7 +59,21 @@ def deploy_donor_pair(algod_client, sender: str, sk: str, *, repo_root: Path) ->
     """Compiles and deploys `contracts/sync_committee/bench_app.py`'s
     `DonorCallee`/`DonorIssuer` pair. Returns `(callee_id, issuer_id)`. Per
     009 §1.2: M9 *may* deploy this pair on a network where it is absent,
-    because it is infrastructure -- source imported, never rewritten."""
+    because it is infrastructure -- source imported, never rewritten.
+
+    012 §4.2/§9 item 5/§17 item 19: an installed `eth-avm-relayer` wheel
+    ships only `relayer/` -- `contracts/` is not there. Raise a NAMED error
+    rather than let `puya_compile_contracts` fail on a missing source file
+    with a bare `FileNotFoundError`."""
+    if not (repo_root / "contracts").is_dir():
+        from relayer.errors import MissingContractsSource
+
+        raise MissingContractsSource(
+            f"{repo_root / 'contracts'} does not exist -- deploy_donor_pair needs a source "
+            "checkout with puyapy on PATH, not just an installed 'eth-avm-relayer' wheel "
+            "(docs/quickstart.md's checkout path; docs/design/012-docs-packaging-release.md §4.2)."
+        )
+
     src = repo_root / "contracts" / "sync_committee" / "bench_app.py"
     contracts = puya_compile_contracts(src)
 

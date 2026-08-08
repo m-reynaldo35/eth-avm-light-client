@@ -60,10 +60,25 @@
       "needs_network": 0,
       "offline": 5
     },
+    "tests/harness/test_doc_claims.py": {
+      "needs_algod": 0,
+      "needs_network": 0,
+      "offline": 14
+    },
     "tests/harness/test_harness_layering.py": {
       "needs_algod": 0,
       "needs_network": 0,
       "offline": 7
+    },
+    "tests/harness/test_manifests.py": {
+      "needs_algod": 0,
+      "needs_network": 4,
+      "offline": 2
+    },
+    "tests/harness/test_packaging.py": {
+      "needs_algod": 0,
+      "needs_network": 0,
+      "offline": 8
     },
     "tests/harness/test_quarantine.py": {
       "needs_algod": 0,
@@ -74,6 +89,11 @@
       "needs_algod": 0,
       "needs_network": 0,
       "offline": 7
+    },
+    "tests/harness/test_versions.py": {
+      "needs_algod": 0,
+      "needs_network": 0,
+      "offline": 12
     },
     "tests/relayer/test_box_budget_model.py": {
       "needs_algod": 3,
@@ -279,9 +299,9 @@
   },
   "generated_by": "pytest --write-tier-manifest",
   "totals": {
-    "collected": 592,
-    "live": 90,
+    "collected": 632,
+    "live": 94,
     "live_heavy": 2,
-    "offline": 500
+    "offline": 536
   }
 }

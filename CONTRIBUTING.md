@@ -32,4 +32,11 @@ diverge from documentation in this project's own history.
 - `ci-offline.yml` (pinned fixtures, no live dependencies) must pass on every
   PR.
 - `ci-live.yml` (dev-mode algod + public Ethereum RPC) should be run manually
-  before a module is marked "Released."
+  before a module is marked "Released," and the release notes must cite the
+  run id it passed on (see `ARCHITECTURE.md`'s "CI" section).
+
+## Releases
+
+The release process — the runbook, the release-readiness checklist, and
+what a `v1.0.0` tag is and is not allowed to claim — lives in
+[`docs/release.md`](./docs/release.md), not here.

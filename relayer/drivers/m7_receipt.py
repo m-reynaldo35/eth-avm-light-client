@@ -208,9 +208,25 @@ def patched_probe_source(repo_root: Path, anchor_app_id: int) -> Path:
     already-deployed M8 app id. Promoted from `tests/state_anchor/
     conftest.py::patched_repo_copy`, generalised out of the test tree
     (§4.3: relayer must not import tests.*) -- NEVER edits the real repo
-    file, only a throwaway temp copy."""
+    file, only a throwaway temp copy.
+
+    012 §4.2/§9 item 5/§17 item 19: an installed `eth-avm-relayer` wheel
+    ships only `relayer/` (§4.2) -- `contracts/` does not exist next to it.
+    Raise a NAMED error here, not a bare `FileNotFoundError` from
+    `shutil.copytree` two lines down, so the caller sees the real reason
+    (a structural wheel limit, not a bug) and where to read about the
+    checkout path that avoids it."""
     import shutil
     import tempfile
+
+    from relayer.errors import MissingContractsSource
+
+    if not (repo_root / "contracts").is_dir():
+        raise MissingContractsSource(
+            f"{repo_root / 'contracts'} does not exist -- prove_receipt(against_anchor=True) needs "
+            "a source checkout with puyapy on PATH, not just an installed 'eth-avm-relayer' wheel "
+            "(docs/quickstart.md's checkout path; docs/design/012-docs-packaging-release.md §4.2)."
+        )
 
     tmp_root = Path(tempfile.mkdtemp(prefix="relayer_probe_"))
     shutil.copytree(repo_root / "contracts", tmp_root / "contracts")

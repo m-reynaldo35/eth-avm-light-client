@@ -32,38 +32,55 @@ def _as_dict(obj) -> dict:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    p = argparse.ArgumentParser(prog="relayer")
-    p.add_argument("--dry-run", action="store_true")
-    p.add_argument("--json", action="store_true")
-    p.add_argument("--config", type=Path, default=None)
-    p.add_argument("--no-cache", action="store_true")
-    p.add_argument("--verbose", action="store_true")
+    p = argparse.ArgumentParser(
+        prog="relayer",
+        description=(
+            "Off-chain client for the ETH-AVM light client (docs/design/009-relayer-client.md). "
+            "Fetches real Ethereum data, assembles the proof shapes M4/M6/M7/M8 verify, and "
+            "submits/decodes results. Untrusted (docs/security.md) -- it is not the verifier."
+        ),
+        epilog=(
+            "'status' works with no signer configured and against a public deployment -- "
+            "see docs/quickstart.md. Every verb accepts --json for machine-readable output."
+        ),
+    )
+    p.add_argument("--dry-run", action="store_true", help="plan and simulate only; never submit a real transaction")
+    p.add_argument("--json", action="store_true", help="print the result as JSON instead of its repr")
+    p.add_argument("--config", type=Path, default=None, help="path to a RelayerConfig file (default: read from env)")
+    p.add_argument("--no-cache", action="store_true", help="bypass any local response cache")
+    p.add_argument("--verbose", action="store_true", help="print progress to stderr")
 
     sub = p.add_subparsers(dest="verb", required=True)
-    sub.add_parser("status")
+    sub.add_parser("status", help="read-only: M4/M8's finalized state, no signer needed")
 
-    sync_p = sub.add_parser("sync")
-    sync_p.add_argument("--bootstrap-root")
-    sync_p.add_argument("--install", action="store_true")
-    sync_p.add_argument("--update", action="store_true")
+    sync_p = sub.add_parser(
+        "sync", help="advance the on-chain sync-committee state (install a generation, or update its finality)",
+    )
+    sync_p.add_argument("--bootstrap-root", help="the light-client bootstrap block root to install from")
+    sync_p.add_argument("--install", action="store_true", help="install a new committee generation")
+    sync_p.add_argument("--update", action="store_true", help="advance finality for the installed generation")
 
-    anchor_p = sub.add_parser("anchor")
-    anchor_p.add_argument("--block", default="latest")
-    anchor_p.add_argument("--mode", default="auto", choices=["auto", "direct", "historical"])
+    anchor_p = sub.add_parser("anchor", help="anchor an execution-layer block's roots into TrustedRootAnchor (M8)")
+    anchor_p.add_argument("--block", default="latest", help="block number, or 'latest' (default)")
+    anchor_p.add_argument("--mode", default="auto", choices=["auto", "direct", "historical"],
+                           help="direct (recent, cheap) vs historical (older, via the ring); auto picks for you")
 
-    prove_p = sub.add_parser("prove")
+    prove_p = sub.add_parser("prove", help="build and submit an M6 (account/storage) or M7 (receipt) proof")
     prove_sub = prove_p.add_subparsers(dest="prove_kind", required=True)
-    acc_p = prove_sub.add_parser("account")
-    acc_p.add_argument("--address", required=True)
-    acc_p.add_argument("--slot", required=True)
-    acc_p.add_argument("--block", default="latest")
-    rcpt_p = prove_sub.add_parser("receipt")
-    rcpt_p.add_argument("--block", type=int, required=True)
-    rcpt_p.add_argument("--tx-index", type=int, required=True)
-    rcpt_p.add_argument("--log-index", type=int, required=True)
-    rcpt_p.add_argument("--against-anchor", action="store_true")
+    acc_p = prove_sub.add_parser(
+        "account", help="M6: prove an account/storage-slot value (submits no transaction, G4-M9 open)",
+    )
+    acc_p.add_argument("--address", required=True, help="0x-prefixed Ethereum address")
+    acc_p.add_argument("--slot", required=True, help="0x-prefixed storage slot (32 bytes)")
+    acc_p.add_argument("--block", default="latest", help="block number, or 'latest' (default)")
+    rcpt_p = prove_sub.add_parser("receipt", help="M7: prove a transaction receipt/log, T1 or T2")
+    rcpt_p.add_argument("--block", type=int, required=True, help="execution-layer block number")
+    rcpt_p.add_argument("--tx-index", type=int, required=True, help="transaction index within the block")
+    rcpt_p.add_argument("--log-index", type=int, required=True, help="log index within the transaction")
+    rcpt_p.add_argument("--against-anchor", action="store_true",
+                         help="verify against a real TrustedRootAnchor (needs a checkout+puyapy, §4.2)")
 
-    sub.add_parser("plan")
+    sub.add_parser("plan", help="print the planned atomic group without submitting it")
     return p
 
 

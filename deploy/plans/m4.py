@@ -75,8 +75,13 @@ def _read_fork_rows(algod_client, app_id: int) -> list[tuple]:
 
 
 def desired_fork_rows(forks: list[str], activation_epochs: dict[str, int]) -> list[tuple]:
+    from deploy.versions_guard import assert_fork_appendable
+
     rows = []
     for fork in forks:
+        # 012 §3.7/§17 item 5: client-side refusal, BEFORE ever building the
+        # row, for a fork listed in versions.json's code_window.unsupported.
+        assert_fork_appendable(fork, "SyncCommitteeVerifier")
         row = forks_mod.m4_fork_row(fork, activation_epochs[fork], forks_mod.fork_version_bytes(fork))
         rows.append(row.as_tuple())
     return sorted(rows, key=lambda r: r[0])

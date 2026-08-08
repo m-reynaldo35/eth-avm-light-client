@@ -749,11 +749,15 @@ behind, nothing to reuse, and nothing to guard.
 **When boxes genuinely are required — and who owns each case:**
 
 - **M7**: the >4,096-byte receipt leaf. It cannot be an application argument (2,048 cap),
-  cannot be an AVM stack value (4,096 cap), and cannot be `keccak256`'d (no streaming
-  hash). Boxes do not fix it either — this is the structural problem `ROADMAP.md`
-  already flags as a hard stop. M5's contribution is to confirm the boundary is
-  unchanged: M5 walks *nodes*, and every node on the path to such a leaf is a normal
-  ≤ 532-byte branch node. Only the terminal node is the problem.
+  cannot be an AVM stack value (4,096 cap), and cannot be hashed with the `keccak256`
+  opcode; software hashing is possible at 109.2 budget/byte (007 §2.4) [**amended,
+  012 §5.4 row 2 / 007 §10**: this originally read "cannot be `keccak256`'d (no
+  streaming hash)" with no software-hashing figure]. Boxes do not fix it either —
+  this is the structural problem `ROADMAP.md` already flags as a hard stop. M5's
+  contribution is to confirm the boundary is unchanged: M5 walks *nodes*, and every
+  node on the path to such a leaf is a normal ≤ 532-byte branch node. Only the
+  terminal node is the problem. M5's args-not-boxes decision is unaffected by this
+  correction.
 - **M8**: root-history storage. Its own decision, unaffected by this one.
 - **A future proof exceeding one group.** §7.6 shows the realistic worst case does not.
 

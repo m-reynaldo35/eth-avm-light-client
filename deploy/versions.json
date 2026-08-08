@@ -1,0 +1,92 @@
+{
+  "avm": {
+    "evidence": ".github/workflows/ci-live.yml ALGOD_IMAGE digest comment; ci-live run 31229821639 (first real green run, G1-M12, docs/design/012-docs-packaging-release.md \u00a70)",
+    "measured_against": "go-algorand 4.7.4 (91cbddcd, rel/stable)",
+    "version": 10
+  },
+  "contracts": {
+    "DonorCallee": {
+      "approval_bytes": 4,
+      "code_id": "ed90f0d2da1f1d1abd773c45230651a292a90edbc12a7bf859a493a12a640ce7",
+      "fork_axis": "none",
+      "source": "contracts/sync_committee/bench_app.py"
+    },
+    "DonorIssuer": {
+      "approval_bytes": 48,
+      "code_id": "e9a262c034240536a1fc65f5fd832d032b4e21984219d9b9792f607d2a8e13fd",
+      "fork_axis": "none",
+      "source": "contracts/sync_committee/bench_app.py"
+    },
+    "Mpt6ComposerApp": {
+      "approval_bytes": 2680,
+      "code_id": "0961084ac74adc4c2e5daed3dc91bc936ce30ff11e3c9af974df53818c242146",
+      "design_doc": "docs/design/006-account-storage-proof.md",
+      "fork_axis": "none",
+      "source": "contracts/composer/bench_app.py"
+    },
+    "Mpt7ReceiptApp": {
+      "approval_bytes": 3108,
+      "code_id": "f7a846ff33314d8f9ecc48e85584327f13e9cb808a3650b30e69339c7fcdc9d2",
+      "design_doc": "docs/design/007-receipt-log-proof.md",
+      "fork_axis": "none",
+      "proof_system": null,
+      "source": "contracts/receipt/bench_app.py",
+      "tiers": [
+        "T1",
+        "T2"
+      ]
+    },
+    "MptSegmentApp": {
+      "approval_bytes": 1991,
+      "code_id": "313c0a923c2d95e6982fb3f681ef18315dcbabebd0a9ed83fba8e87f1f8d4242",
+      "fork_axis": "none",
+      "source": "contracts/mpt/bench_app.py"
+    },
+    "SyncCommitteeVerifier": {
+      "approval_bytes": 6980,
+      "bytecode_cap_headroom_bytes": 1212,
+      "code_id": "7a937250bbff32a2269b6773de508456e05c677c5f89810c16ce70d2bbe2f152",
+      "code_window": {
+        "reason": "004 \u00a74.5 normative: the Gloas row MUST NOT be appended until its gindices are confirmed against vendored Gloas vectors; 003 \u00a72.6 measures a depth-11 branch at 738 > the 700 single-call limit, so group sizing must change too.",
+        "supported": [
+          "deneb",
+          "electra",
+          "fulu"
+        ],
+        "table_capacity_rows": 16,
+        "unsupported": [
+          "gloas"
+        ]
+      },
+      "design_doc": "docs/design/004-sync-committee.md",
+      "fork_axis": "table",
+      "source": "contracts/sync_committee/verifier.py"
+    },
+    "TrustedRootAnchor": {
+      "approval_bytes": 3027,
+      "code_id": "9b790b33f2116a5ccbbe07ce2d9ac040c8c1897c695ca2725b7d99956522d57d",
+      "code_window": {
+        "reason": "008 NG3 / \u00a710.5: a depth-11 EL branch pushes HISTORICAL's argument payload over the 2,048 B cap. O-M8-4, not approved.",
+        "supported": [
+          "deneb",
+          "electra",
+          "fulu"
+        ],
+        "table_capacity_rows": 8,
+        "unsupported": [
+          "gloas"
+        ]
+      },
+      "consumers_bound_at_compile_time": true,
+      "design_doc": "docs/design/008-trusted-root-anchor.md",
+      "fork_axis": "table",
+      "redeploy_cascades_to": [
+        "every M8 consumer"
+      ],
+      "source": "contracts/state_anchor/anchor_app.py"
+    }
+  },
+  "generated_by": "python -m deploy schema",
+  "release": null,
+  "versions_version": 1
+}
