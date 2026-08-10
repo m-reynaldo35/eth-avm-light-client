@@ -17,7 +17,7 @@ import json
 from pathlib import Path
 
 from deploy.compile import COMPILED_CACHE_DIR, load_bare_contract_cache
-from deploy.mbr import box_mbr, global_state_mbr, min_extra_pages
+from deploy.mbr import GLOBAL_STATE_PER_BYTES_MICROALGO, box_mbr, global_state_mbr, min_extra_pages
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SCHEMA_DIR = Path(__file__).resolve().parent
@@ -106,8 +106,6 @@ def generate_m4() -> dict:
     n_ints = arc56["state"]["schema"]["global"]["ints"]
     n_bytes = arc56["state"]["schema"]["global"]["bytes"]
 
-    forks_box_name = m4_forks.FORKS_BOX_NAME
-    forks_box_bytes = m4_forks.FORKS_BOX_BYTES
     key_box_name_bytes = len(m4_install.KEY_BOX_PREFIX) + 8 + 1  # "k:" + itob(gen) + itob(j)[7:8]
     session_box_name_bytes = len(m4_install.SESSION_BOX_PREFIX) + 8  # "s:" + itob(gen)
     total_box_name_bytes = len(m4_install.TOTAL_BOX_PREFIX) + 8  # "a:" + itob(gen)
@@ -124,18 +122,28 @@ def generate_m4() -> dict:
             "schema": {"ints": n_ints, "bytes": n_bytes},
             "creator_mbr_microalgo": global_state_mbr(n_ints, n_bytes),
             "keys": keys,
+            # 013 §5.2: replaces the deleted `fork_table` box-family entry --
+            # the fork table moved to global state (013 §3), so this is
+            # where its capacity/MBR/writer/deleter now live.
+            "row_family": {
+                "family": "fork_table",
+                "key": {
+                    "prefix": m4_forks.FORK_ROW_KEY_PREFIX.decode(),
+                    "index_encoding": "itob(index)[7:8]",
+                    "key_bytes": len(m4_forks.FORK_ROW_KEY_PREFIX) + 1,
+                },
+                "value_bytes": m4_forks.FORK_ROW_BYTES,
+                "capacity": m4_forks.FORK_TABLE_CAPACITY,
+                "slots_reserved": m4_forks.FORK_TABLE_CAPACITY,
+                "mbr_microalgo_per_slot": GLOBAL_STATE_PER_BYTES_MICROALGO,
+                "mbr_microalgo_total": GLOBAL_STATE_PER_BYTES_MICROALGO * m4_forks.FORK_TABLE_CAPACITY,
+                "reserved_by": "StateTotals(global_bytes=7 + FORK_TABLE_CAPACITY)",
+                "written_by": "append_fork_row",
+                "deleted_by": None,
+                "lifetime": "permanent -- no deleter exists (010 §10.4)",
+            },
         },
         "boxes": [
-            {
-                "family": "fork_table",
-                "name": {"literal": forks_box_name.decode(), "name_bytes": len(forks_box_name)},
-                "value_bytes": forks_box_bytes,
-                "mbr_microalgo": box_mbr(len(forks_box_name), forks_box_bytes),
-                "count": 1,
-                "created_by": "create",
-                "deleted_by": None,
-                "lifetime": "permanent -- no deleter exists (§10.4)",
-            },
             {
                 "family": "committee_keys",
                 "name": {"prefix": m4_install.KEY_BOX_PREFIX.decode(),
@@ -172,12 +180,16 @@ def generate_m4() -> dict:
         ],
         "deploy": {
             "create_signature": _method_signature(methods["create"]),
-            "create_creates_boxes": [forks_box_name.decode()],
-            "mbr_at_create_microalgo": 100_000 + box_mbr(len(forks_box_name), forks_box_bytes),
+            # 013 §5.2: create() creates no box at all now (the fork table
+            # moved to global state, whose MBR is the creator-mbr figure
+            # above) -- `mbr_at_create_microalgo` drops to the app-account
+            # floor.
+            "create_creates_boxes": [],
+            "mbr_at_create_microalgo": 100_000,
             "ordering": [],
             "init_calls": [
                 {"method": "append_fork_row", "repeat": "len(fork_rows)", "cursor": "global:fork_count",
-                 "append_only": True, "boxes": [forks_box_name.decode()]},
+                 "append_only": True},
             ],
             "min_box_refs_for_install_open": MIN_BOX_REFS_FOR_INSTALL_OPEN,
         },
@@ -193,7 +205,6 @@ def generate_m4() -> dict:
 # ---------------------------------------------------------------------------
 def generate_m8() -> dict:
     from contracts.state_anchor import constants as m8c
-    from contracts.state_anchor import forks as m8_forks
 
     arc56 = json.loads((REPO_ROOT / "contracts" / "state_anchor" / "TrustedRootAnchor.arc56.json").read_text())
     program = _arc56_program_info(arc56)
@@ -221,18 +232,27 @@ def generate_m8() -> dict:
             "schema": {"ints": n_ints, "bytes": n_bytes},
             "creator_mbr_microalgo": global_state_mbr(n_ints, n_bytes),
             "keys": keys,
+            # 013 §5.2: replaces the deleted `fork_table` box-family entry --
+            # the fork table moved to global state (013 §3).
+            "row_family": {
+                "family": "fork_table",
+                "key": {
+                    "prefix": m8c.FORK_ROW_KEY_PREFIX.decode(),
+                    "index_encoding": "itob(index)[7:8]",
+                    "key_bytes": len(m8c.FORK_ROW_KEY_PREFIX) + 1,
+                },
+                "value_bytes": m8c.FORK_ROW_BYTES,
+                "capacity": m8c.FORK_TABLE_CAPACITY,
+                "slots_reserved": m8c.FORK_TABLE_CAPACITY,
+                "mbr_microalgo_per_slot": GLOBAL_STATE_PER_BYTES_MICROALGO,
+                "mbr_microalgo_total": GLOBAL_STATE_PER_BYTES_MICROALGO * m8c.FORK_TABLE_CAPACITY,
+                "reserved_by": "StateTotals(global_bytes=1 + FORK_TABLE_CAPACITY)",
+                "written_by": "append_fork_row",
+                "deleted_by": None,
+                "lifetime": "permanent -- no deleter exists (010 §10.4)",
+            },
         },
         "boxes": [
-            {
-                "family": "fork_table",
-                "name": {"literal": m8_forks.FORKS_BOX_NAME.decode(), "name_bytes": len(m8_forks.FORKS_BOX_NAME)},
-                "value_bytes": m8c.FORKS_BOX_BYTES,
-                "mbr_microalgo": box_mbr(len(m8_forks.FORKS_BOX_NAME), m8c.FORKS_BOX_BYTES),
-                "count": 1,
-                "created_by": "create",
-                "deleted_by": None,
-                "lifetime": "permanent -- no deleter exists (§10.4)",
-            },
             {
                 "family": "ring",
                 "name": {"prefix": m8c.RING_BOX_PREFIX.decode(), "key": "itob(el_block_number & (ring_size-1))",
@@ -280,14 +300,15 @@ def generate_m8() -> dict:
         ],
         "deploy": {
             "create_signature": _method_signature(methods["create"]),
-            "create_creates_boxes": [m8_forks.FORKS_BOX_NAME.decode()],
-            "mbr_at_create_microalgo": 100_000 + box_mbr(len(m8_forks.FORKS_BOX_NAME), m8c.FORKS_BOX_BYTES),
+            # 013 §5.2: create() creates no box at all now.
+            "create_creates_boxes": [],
+            "mbr_at_create_microalgo": 100_000,
             "ordering": ["m4 must already exist (m4_app_id is write-once)"],
             "init_calls": [
                 {"method": "ring_init_chunk", "repeat": "ceil(ring_size/8)", "max_boxes_per_call": 8,
                  "cursor": "global:ring_cursor", "completion": "ring_cursor == ring_size => frozen := 0"},
                 {"method": "append_fork_row", "repeat": "len(fork_rows)", "cursor": "global:fork_count",
-                 "append_only": True, "boxes": [m8_forks.FORKS_BOX_NAME.decode()]},
+                 "append_only": True},
             ],
         },
         "invariants": [

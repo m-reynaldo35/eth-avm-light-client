@@ -59,7 +59,10 @@ def test_v3_fork_axis_none_contracts_have_no_fork_constant_in_their_source():
         source = entry.get("source")
         assert source, f"{name}: fork_axis 'none' but no source recorded to check"
         text = (REPO_ROOT / source).read_text()
-        for marker in ("FORKS_BOX_NAME", "FORK_TABLE_CAPACITY", "append_fork_row"):
+        # 013 §17 item 10: `FORKS_BOX_NAME` no longer exists anywhere (the
+        # fork table moved to global state) -- the marker that would have
+        # silently stopped discriminating is `FORK_ROW_KEY_PREFIX` instead.
+        for marker in ("FORK_ROW_KEY_PREFIX", "FORK_TABLE_CAPACITY", "append_fork_row"):
             assert marker not in text, f"{name}'s source {source} claims fork_axis 'none' but contains {marker!r}"
 
 
@@ -142,8 +145,11 @@ def test_v8_avm_version_matches_every_schema():
 def test_v9_bytecode_cap_headroom_is_derived_not_typed():
     versions = generate.generate_versions()
     m4 = versions["contracts"]["SyncCommitteeVerifier"]
-    assert m4["approval_bytes"] == 6980
-    assert m4["bytecode_cap_headroom_bytes"] == 8192 - m4["approval_bytes"] == 1212
+    # 013 §3.6: the fork-table storage revision made the compiled program
+    # 3 bytes SMALLER (6,980 -> 6,977 -- box opcodes emit more code than
+    # `app_global_get_ex` with a 2-byte key), so headroom grew by 3 bytes.
+    assert m4["approval_bytes"] == 6977
+    assert m4["bytecode_cap_headroom_bytes"] == 8192 - m4["approval_bytes"] == 1215
 
 
 # ---------------------------------------------------------------------------

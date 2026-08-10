@@ -43,7 +43,7 @@
     "tests/deploy/test_schema.py": {
       "needs_algod": 0,
       "needs_network": 0,
-      "offline": 13
+      "offline": 14
     },
     "tests/deploy/test_security_matrix.py": {
       "needs_algod": 3,
@@ -101,8 +101,8 @@
       "offline": 0
     },
     "tests/relayer/test_live_relayer.py": {
-      "needs_algod": 7,
-      "needs_network": 7,
+      "needs_algod": 8,
+      "needs_network": 8,
       "offline": 0
     },
     "tests/relayer/test_plan_boxes.py": {
@@ -170,6 +170,11 @@
       "needs_algod": 0,
       "needs_network": 0,
       "offline": 6
+    },
+    "tests/sync_committee/test_forks_state.py": {
+      "needs_algod": 9,
+      "needs_network": 0,
+      "offline": 0
     },
     "tests/sync_committee/test_install_live.py": {
       "needs_algod": 4,
@@ -299,9 +304,9 @@
   },
   "generated_by": "pytest --write-tier-manifest",
   "totals": {
-    "collected": 632,
-    "live": 96,
+    "collected": 643,
+    "live": 106,
     "live_heavy": 2,
-    "offline": 534
+    "offline": 535
   }
 }

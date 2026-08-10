@@ -154,19 +154,17 @@ def anchor_two_rows(compiled, account, m4probe):
     anchor_contracts, _bench = compiled
     sender, sk = account
     h = Arc4Harness(anchor_contracts["TrustedRootAnchor"], sender, sk)
-    h.create([sender, m4probe.app_id, RING_N], extra_pages=1, boxes=[(0, b"forks8")], fund_app=15_000_000)
+    h.create([sender, m4probe.app_id, RING_N], extra_pages=1, fund_app=15_000_000)
     h.ring_n = RING_N
     ring_boxes = [(0, b"h:" + i.to_bytes(8, "big")) for i in range(RING_N)]
     h.submit([{"method": "ring_init_chunk", "args": [RING_N], "boxes": ring_boxes}])
     h.submit([{
         "method": "append_fork_row",
         "args": [DENEB_ACTIVATION_EPOCH, G_STATE_ROOT, G_RECEIPTS_ROOT, G_BLOCK_NUMBER, G_BLOCK_ROOTS_BASE_DENEB],
-        "boxes": [(0, b"forks8")],
     }])
     h.submit([{
         "method": "append_fork_row",
         "args": [ELECTRA_ACTIVATION_EPOCH, G_STATE_ROOT, G_RECEIPTS_ROOT, G_BLOCK_NUMBER, G_BLOCK_ROOTS_BASE_ELECTRA],
-        "boxes": [(0, b"forks8")],
     }])
     return h
 
@@ -297,7 +295,7 @@ class TestF6DenebElectraTwoRowTrap:
         anchor_contracts, _bench = compiled
         sender, sk = account
         h = Arc4Harness(anchor_contracts["TrustedRootAnchor"], sender, sk)
-        h.create([sender, m4probe.app_id, RING_N], extra_pages=1, boxes=[(0, b"forks8")], fund_app=15_000_000)
+        h.create([sender, m4probe.app_id, RING_N], extra_pages=1, fund_app=15_000_000)
         h.ring_n = RING_N
         ring_boxes = [(0, b"h:" + i.to_bytes(8, "big")) for i in range(RING_N)]
         h.submit([{"method": "ring_init_chunk", "args": [RING_N], "boxes": ring_boxes}])
@@ -305,7 +303,6 @@ class TestF6DenebElectraTwoRowTrap:
         h.submit([{
             "method": "append_fork_row",
             "args": [DENEB_ACTIVATION_EPOCH, G_STATE_ROOT, G_RECEIPTS_ROOT, G_BLOCK_NUMBER, G_BLOCK_ROOTS_BASE_DENEB],
-            "boxes": [(0, b"forks8")],
         }])
 
         fx = _build_f6_fixture()

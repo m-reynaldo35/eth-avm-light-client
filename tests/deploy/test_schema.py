@@ -30,21 +30,53 @@ def test_x1_generated_files_match_committed_files_byte_for_byte():
 
 
 # ---------------------------------------------------------------------------
-# X-2: every box value_bytes vs the contract's own constant.
+# X-2: every box value_bytes vs the contract's own constant. 013 §5.2: the
+# fork table is no longer a box family (it moved to global state, tested by
+# X-2b's `row_family` block below), so it no longer appears in `boxes[]`.
 # ---------------------------------------------------------------------------
 def test_x2_box_value_bytes_match_contract_constants():
     m4 = generate.generate_m4()
     by_family = {b["family"]: b for b in m4["boxes"]}
-    assert by_family["fork_table"]["value_bytes"] == 576
+    assert "fork_table" not in by_family
     assert by_family["committee_keys"]["value_bytes"] == 6144
     assert by_family["install_session"]["value_bytes"] == 424
     assert by_family["aggregate"]["value_bytes"] == 96
 
     m8 = generate.generate_m8()
     by_family8 = {b["family"]: b for b in m8["boxes"]}
-    assert by_family8["fork_table"]["value_bytes"] == 320
+    assert "fork_table" not in by_family8
     assert by_family8["ring"]["value_bytes"] == 154
     assert by_family8["pinned"]["value_bytes"] == 186
+
+
+# ---------------------------------------------------------------------------
+# X-2b (013 §5.2/§16): the `row_family` block that replaces the deleted
+# `fork_table` box entry -- carries the fork table's capacity/MBR/writer,
+# every field derived from an imported contract constant, never retyped.
+# ---------------------------------------------------------------------------
+def test_x2b_row_family_block_matches_contract_constants():
+    from contracts.sync_committee import forks as m4_forks
+    from contracts.state_anchor import constants as m8c
+
+    m4 = generate.generate_m4()
+    rf4 = m4["global_state"]["row_family"]
+    assert rf4["family"] == "fork_table"
+    assert rf4["key"]["prefix"] == "f" == m4_forks.FORK_ROW_KEY_PREFIX.decode()
+    assert rf4["value_bytes"] == m4_forks.FORK_ROW_BYTES == 36
+    assert rf4["capacity"] == m4_forks.FORK_TABLE_CAPACITY == 16
+    assert rf4["mbr_microalgo_total"] == 50_000 * 16 == 800_000
+    assert rf4["written_by"] == "append_fork_row"
+    assert rf4["deleted_by"] is None
+
+    m8 = generate.generate_m8()
+    rf8 = m8["global_state"]["row_family"]
+    assert rf8["family"] == "fork_table"
+    assert rf8["key"]["prefix"] == "g" == m8c.FORK_ROW_KEY_PREFIX.decode()
+    assert rf8["value_bytes"] == m8c.FORK_ROW_BYTES == 40
+    assert rf8["capacity"] == m8c.FORK_TABLE_CAPACITY == 8
+    assert rf8["mbr_microalgo_total"] == 50_000 * 8 == 400_000
+    assert rf8["written_by"] == "append_fork_row"
+    assert rf8["deleted_by"] is None
 
 
 # ---------------------------------------------------------------------------
@@ -69,19 +101,21 @@ def test_x3_record_offsets_match_constants_py():
 
 
 # ---------------------------------------------------------------------------
-# X-4: MBR model vs the protocol formula, for every family.
+# X-4: MBR model vs the protocol formula, for every family. 013 §5.2: the
+# fork table's MBR is now the `row_family.mbr_microalgo_total` figure
+# (X-2b), not a box-family entry.
 # ---------------------------------------------------------------------------
 def test_x4_mbr_model_matches_every_box_family():
     m4 = generate.generate_m4()
     by_family = {b["family"]: b for b in m4["boxes"]}
-    assert by_family["fork_table"]["mbr_microalgo"] == 234_900
+    assert "fork_table" not in by_family
     assert by_family["committee_keys"]["mbr_microalgo"] == 2_464_500
     assert by_family["install_session"]["mbr_microalgo"] == 176_100
     assert by_family["aggregate"]["mbr_microalgo"] == 44_900
 
     m8 = generate.generate_m8()
     by_family8 = {b["family"]: b for b in m8["boxes"]}
-    assert by_family8["fork_table"]["mbr_microalgo"] == 132_900
+    assert "fork_table" not in by_family8
     assert by_family8["ring"]["mbr_microalgo"] == 68_100
     assert by_family8["pinned"]["mbr_microalgo"] == 80_900
 
@@ -101,13 +135,16 @@ def test_x5_min_extra_pages():
 # X-6: global-state schema vs the ARC-56 artifacts.
 # ---------------------------------------------------------------------------
 def test_x6_global_state_schema_and_mbr():
+    # 013 §3.4/§3.6/§4: the fork table's 16/8 dynamic byte slices are now
+    # part of the declared schema (via `StateTotals`), so both contracts'
+    # schemas and creator MBR grew.
     m4 = generate.generate_m4()
-    assert m4["global_state"]["schema"] == {"ints": 13, "bytes": 7}
-    assert m4["global_state"]["creator_mbr_microalgo"] == 820_500
+    assert m4["global_state"]["schema"] == {"ints": 13, "bytes": 23}
+    assert m4["global_state"]["creator_mbr_microalgo"] == 1_620_500
 
     m8 = generate.generate_m8()
-    assert m8["global_state"]["schema"] == {"ints": 9, "bytes": 1}
-    assert m8["global_state"]["creator_mbr_microalgo"] == 406_500
+    assert m8["global_state"]["schema"] == {"ints": 9, "bytes": 9}
+    assert m8["global_state"]["creator_mbr_microalgo"] == 806_500
 
 
 # ---------------------------------------------------------------------------
@@ -139,16 +176,30 @@ def test_drift_1_ring_size_not_ring_n():
 
 
 def test_drift_2_forks8_is_320_bytes_not_321():
+    """013 §5.2/§8 case 2: `forks8` is no longer a box at all -- the drift
+    this test guards (a doc claiming 321 B instead of the real 320) is now
+    expressed against the `row_family` block's `value_bytes *
+    capacity == 320`, the same fact restated through the new storage
+    mechanism, not a different fact."""
+    from contracts.state_anchor import constants as m8c
+
+    assert m8c.FORK_ROW_BYTES * m8c.FORK_TABLE_CAPACITY == 320
+
     m8 = generate.generate_m8()
-    fork_table = next(b for b in m8["boxes"] if b["family"] == "fork_table")
-    assert fork_table["value_bytes"] == 320
-    assert fork_table["mbr_microalgo"] == 132_900
+    rf8 = m8["global_state"]["row_family"]
+    assert rf8["value_bytes"] == 40
+    assert rf8["capacity"] == 8
+    assert rf8["value_bytes"] * rf8["capacity"] == 320
+    assert rf8["mbr_microalgo_total"] == 400_000
 
 
-def test_drift_3_creator_mbr_is_406500_not_378000():
+def test_drift_3_creator_mbr_is_806500_not_378000():
+    """013 §4: the creator-MBR figure this drift test guards moved again --
+    from 406,500 (13/9, 7/1 bytes) to 806,500 (9, 9 bytes) now that the
+    fork table's 8 dynamic byte slices are declared via `StateTotals`."""
     m8 = generate.generate_m8()
-    assert m8["global_state"]["creator_mbr_microalgo"] == 406_500
-    assert m8["global_state"]["schema"] == {"ints": 9, "bytes": 1}
+    assert m8["global_state"]["creator_mbr_microalgo"] == 806_500
+    assert m8["global_state"]["schema"] == {"ints": 9, "bytes": 9}
 
 
 # ---------------------------------------------------------------------------

@@ -477,6 +477,14 @@ Depths (`floorlog2`): 105→6, 54/55→5, 169→7, 86/87→6. Real Puya branch c
 
 ### 4.3 The deployed table
 
+> **Superseded by [013 §3](013-fork-table-global-state.md#3-the-replacement-mechanism):**
+> the fork table moved from box storage to global state (create()'s box MBR
+> was charged to the app account, causing the mainnet create-race that 013
+> exists to eliminate). Row encoding, validation, and lookup rules are
+> unchanged; only the storage primitive moved. This section is left as
+> originally written, per this project's convention that a design doc
+> records what was designed at the time.
+
 Row shape, stored in box `forks` (§7.3), append-only, governance-written:
 
 ```

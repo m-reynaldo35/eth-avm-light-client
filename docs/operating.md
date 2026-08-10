@@ -79,46 +79,65 @@ precondition this project does not waive for a mainnet deployment of M4/M8.
 
 | step | txns | µALGO (fees) |
 |---|---:|---:|
-| M4: fund + create + 3 fork rows | 5 | 5,000 |
+| M4: create + 3 fork rows | 4 | 4,000 |
 | M4: top-up to install level | 1 | 1,000 |
-| M8: fund + create + `ring_init_chunk` ×16 + 3 fork rows + top-up | 22 | 22,000 |
+| M8: create + `ring_init_chunk` ×16 + 3 fork rows + top-up | 21 | 21,000 |
 | M7: create + optional T2 float payment | 2 | 2,000 |
 | M6: create | 1 | 1,000 |
 | Donor pair: 2 creates | 2 | 2,000 |
-| **Total fees** | **33** | **≈ 0.033 ALGO** |
+| **Total fees** | **31** | **≈ 0.031 ALGO** |
 
-MBR (the real cost — fees are noise by comparison):
+**[013](design/013-fork-table-global-state.md)**: `create()` no longer needs
+a pre-funding payment for either contract — the fork table moved to global
+state (charged to the creator at create time, no app-account pre-funding
+race to bound), so the funding-Payment step that used to precede each
+`create()` is simply gone, not merely bounded.
+
+MBR (the real cost — fees are noise by comparison). **Revised by
+[013](design/013-fork-table-global-state.md)**: the fork table moved from a
+box (charged to the app account) to global state (charged to the creator) --
+M4's and M8's app-account rows drop to the base minimum, and their
+creator-side global-state rows grow by the table's declared capacity
+(16/8 rows respectively). Net effect: **+832,200 µALGO**, one-time, moved
+from the app accounts to the creator, across both contracts (013 §4):
 
 | account | item | µALGO |
 |---|---|---:|
-| creator | M4 global state (13 ints, 7 bytes) | 820,500 |
-| creator | M8 global state (9 ints, 1 byte) | 406,500 |
-| M4 app | base + `forks` box | 334,900 |
+| creator | M4 global state (13 ints, 23 bytes) | 1,620,500 |
+| creator | M8 global state (9 ints, 9 bytes) | 806,500 |
+| M4 app | base (no box created at create() any more) | 100,000 |
 | M4 app | 8 key boxes + aggregate, one generation | 19,760,900 |
-| M8 app | base + `forks8` box | 232,900 |
+| M8 app | base (no box created at create() any more) | 100,000 |
 | M8 app | ring at N=128 | 8,716,800 |
 | M7 app | base | 100,000 |
 | M7 app | T2 float (worst-case 4,096 B leaf) | 1,644,100 |
 | M6 app | base | 100,000 |
 | donors | 2 × base | 200,000 |
-| | **total locked (N=128)** | **≈ 32.3 ALGO** |
-| | **total locked (N=8, test scale)** | **≈ 24.1 ALGO** |
+| | **total locked (N=128)** | **≈ 33.1 ALGO** |
+| | **total locked (N=8, test scale)** | **≈ 25.0 ALGO** |
 
-**Box MBR on these contracts is not recoverable.** Every µALGO sent to a
-box-holding app account is spent, not lent — there is no deleter for the
-`forks`/`forks8`/ring box families. On a test network that is free. **On
-mainnet it is real ALGO, permanently locked; treat this line as load-bearing,
-not a footnote, before funding a mainnet deployment.**
+**Neither the global-state MBR nor the box MBR on these contracts is
+recoverable in practice.** Global-state MBR is released to the creator only
+if the application is deleted, and both contracts are `NoOp`-only gated
+(`DeleteApplication` is refused outright) — so, exactly like box MBR, every
+µALGO sent is spent, not lent. There is no deleter for the fork table (now
+global state) or the ring box family either. On a test network that is
+free. **On mainnet it is real ALGO, permanently locked; treat this line as
+load-bearing, not a footnote, before funding a mainnet deployment.**
 
-The app-id-prediction race (the only genuinely non-idempotent step,
-`create()`) is bounded, not eliminated: `apply` simulates the create
-unfunded first (`allow_empty_signatures=True`), reads the exact MBR
-requirement and predicted app id back from the simulation's own error
-message, funds precisely that address, and refuses to proceed if the real
-create lands at a different id than predicted. Measured worst-case loss on
-a lost race: **0.2329–0.3349 ALGO**, permanently — down from an unbounded
-~45 ALGO under the old probe-app convention, and it works with no signer
-for the prediction step.
+The app-id-prediction race that this mechanism exists to bound is, for M4
+and M8, now **structurally unreachable** rather than merely bounded
+([013](design/013-fork-table-global-state.md) §0/§5.4): `create()` creates
+no box for either contract any more, so `apply` simulates the create
+unfunded first (`allow_empty_signatures=True`), finds it needs **zero**
+pre-funding, and skips both the funding Payment and the id-match check
+entirely — there is no address to predict and nothing to fund before the
+id is known. The bounded-race machinery (`predict_fund_and_create`,
+`CreateRaced`) is unchanged and still applies to any future contract that
+does create a box at create() time; it simply never engages for M4/M8 any
+more. (Historical note: before 013, the measured worst-case loss on a lost
+race was 0.2329–0.3349 ALGO, permanently — itself already down from an
+unbounded ~45 ALGO under the old probe-app convention.)
 
 ## Migration — what a redeploy actually costs
 

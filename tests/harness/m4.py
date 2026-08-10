@@ -51,10 +51,16 @@ def deploy_fresh_committee():
 
     h = SyncCommitteeLiveHarness()
     h.create(h.sender, bytes.fromhex(GENESIS_VALIDATORS_ROOT_HEX))
+    # 013 §0/§5.4: create() no longer pre-funds the app account (the fork
+    # table moved to global state, whose MBR the CREATOR pays at create
+    # time) -- but M4's OTHER box families (k:/s:/a:, untouched by 013)
+    # still need the app account funded before the install flow creates
+    # them, so that happens here instead, as an ordinary post-create
+    # payment to the now-known address (no prediction, no race).
+    h.fund_app()
     h.submit([(
         "append_fork_row",
         [FULU_FORK_EPOCH, FULU_FORK_VERSION, FINALITY_GINDEX, CURRENT_SC_GINDEX, NEXT_SC_GINDEX],
-        [(0, b"forks")],
     )])
     return h
 

@@ -1,19 +1,6 @@
 {
   "boxes": [
     {
-      "count": 1,
-      "created_by": "create",
-      "deleted_by": null,
-      "family": "fork_table",
-      "lifetime": "permanent -- no deleter exists (\u00a710.4)",
-      "mbr_microalgo": 132900,
-      "name": {
-        "literal": "forks8",
-        "name_bytes": 6
-      },
-      "value_bytes": 320
-    },
-    {
       "count": "ring_size",
       "created_by": "ring_init_chunk",
       "deleted_by": null,
@@ -102,9 +89,7 @@
   ],
   "contract": "TrustedRootAnchor",
   "deploy": {
-    "create_creates_boxes": [
-      "forks8"
-    ],
+    "create_creates_boxes": [],
     "create_signature": "create(address,uint64,uint64)void",
     "init_calls": [
       {
@@ -116,22 +101,19 @@
       },
       {
         "append_only": true,
-        "boxes": [
-          "forks8"
-        ],
         "cursor": "global:fork_count",
         "method": "append_fork_row",
         "repeat": "len(fork_rows)"
       }
     ],
-    "mbr_at_create_microalgo": 232900,
+    "mbr_at_create_microalgo": 100000,
     "ordering": [
       "m4 must already exist (m4_app_id is write-once)"
     ]
   },
   "design_doc": "docs/design/008-trusted-root-anchor.md",
   "global_state": {
-    "creator_mbr_microalgo": 406500,
+    "creator_mbr_microalgo": 806500,
     "keys": [
       {
         "key": "gov",
@@ -174,8 +156,25 @@
         "type": "uint64"
       }
     ],
+    "row_family": {
+      "capacity": 8,
+      "deleted_by": null,
+      "family": "fork_table",
+      "key": {
+        "index_encoding": "itob(index)[7:8]",
+        "key_bytes": 2,
+        "prefix": "g"
+      },
+      "lifetime": "permanent -- no deleter exists (010 \u00a710.4)",
+      "mbr_microalgo_per_slot": 50000,
+      "mbr_microalgo_total": 400000,
+      "reserved_by": "StateTotals(global_bytes=1 + FORK_TABLE_CAPACITY)",
+      "slots_reserved": 8,
+      "value_bytes": 40,
+      "written_by": "append_fork_row"
+    },
     "schema": {
-      "bytes": 1,
+      "bytes": 9,
       "ints": 9
     }
   },
@@ -184,8 +183,8 @@
     "no method takes a ring_size/resize argument (asserted against the ARC-56 method list)"
   ],
   "program": {
-    "approval_bytes": 3027,
-    "approval_sha256": "9b790b33f2116a5ccbbe07ce2d9ac040c8c1897c695ca2725b7d99956522d57d",
+    "approval_bytes": 3023,
+    "approval_sha256": "c3f55af8ddbec90796d300b42ab5ccd1a860643a1ac69b9ded471d0a19356cd1",
     "avm_version": 10,
     "clear_bytes": 4,
     "clear_sha256": "d17be8c9ad6dedb5b4394a8fdc00273a4deb4725415ff8ce151a12544b4a280a",

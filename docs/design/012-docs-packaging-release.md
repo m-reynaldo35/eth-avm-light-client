@@ -1074,6 +1074,11 @@ The status table says exactly that, in those numbers.
 
 ### 5.2 The other documents
 
+> **Superseded by [013 §3.6](013-fork-table-global-state.md#36-the-mechanism-compiled-for-real):**
+> the "1,212 B M4 headroom" cited below (`docs/versioning.md`'s row) moved to
+> 1,215 B — the fork-table storage revision made the compiled program 3
+> bytes smaller. Left as originally written, per this project's convention.
+
 | file | why it exists | key content |
 |---|---|---|
 | `CHANGELOG.md` | **new.** §5.5 | one entry per release; every claim cites a commit, a run id, or an on-chain round |

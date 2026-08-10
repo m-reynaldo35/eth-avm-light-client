@@ -208,10 +208,15 @@ def build_historical_fixture(fu_now_args, t_slot_offset: int, *, cache) -> dict:
 def auto_boxes_for(method_name: str, block_number: int, ring_n: int) -> list[tuple[int, bytes]]:
     """Mirrors `tests/state_anchor/conftest.py::Arc4Harness._auto_boxes_for`
     -- the ring/pin box names are a pure function of `block_number` and the
-    immutable `ring_n`, so a caller never hand-computes them."""
+    immutable `ring_n`, so a caller never hand-computes them.
+
+    013 §6.4: `forks8` is no longer a box (the fork table moved to global
+    state, which costs no box-reference budget at all), so
+    `anchor_direct`/`anchor_historical` no longer add a reference for it --
+    unlike M4's bootstrap group (§6.4), M8's anchor group is nowhere near
+    any reference cap (008 §18/§19: 2 boxes, 475 B, 12% of two
+    references), so this is a straight deletion, not a replacement."""
     boxes = []
-    if method_name in ("anchor_direct", "anchor_historical"):
-        boxes.append((0, b"forks8"))
     residue = block_number & (ring_n - 1)
     boxes.append((0, ring_box_name(residue)))
     if method_name in ("pin", "unpin"):

@@ -15,6 +15,7 @@ from algopy import (
     Application,
     Bytes,
     Global,
+    StateTotals,
     Txn,
     UInt64,
     arc4,
@@ -35,7 +36,7 @@ from contracts.state_anchor.bridge import (
     fold_execution_fields,
     read_m4_finalized,
 )
-from contracts.state_anchor.constants import RECORD_LEN
+from contracts.state_anchor.constants import FORK_TABLE_CAPACITY, RECORD_LEN
 from contracts.state_anchor.record import (
     a_is_revoked,
     a_matches_block_number,
@@ -55,7 +56,11 @@ def zero32() -> Bytes:
     return op.Global.zero_address.bytes
 
 
-class TrustedRootAnchor(ARC4Contract, avm_version=10):
+class TrustedRootAnchor(
+    ARC4Contract,
+    avm_version=10,
+    state_totals=StateTotals(global_uints=9, global_bytes=1 + FORK_TABLE_CAPACITY),
+):
     # ---- one-time setup --------------------------------------------------
 
     @arc4.abimethod(create="require")
@@ -93,7 +98,6 @@ class TrustedRootAnchor(ARC4Contract, avm_version=10):
         self.frozen = UInt64(1)
         self.conflict = UInt64(0)
         self.fork_count = UInt64(0)
-        forks.forks_box_create()
 
     @arc4.abimethod
     def ring_init_chunk(self, k: arc4.UInt64) -> None:

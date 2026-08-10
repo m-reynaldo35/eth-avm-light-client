@@ -81,8 +81,11 @@ def plan_box_refs(box_sizes: dict[str, int]) -> BoxRefPlan:
 # M4-specific box-name/size helpers (§7.4's worked example, §9.3's box-name
 # construction) -- kept here rather than in `relayer.drivers.m4_sync_committee`
 # because they are pure box-accounting, not ABI/network concerns.
+#
+# 013 §6.1: the fork table moved to global state, which consumes NO
+# box-reference budget at all -- `FORKS_BOX_BYTES` and the `include_forks`
+# parameter that used to cost it into this plan are both gone.
 # ---------------------------------------------------------------------------
-FORKS_BOX_BYTES = 576
 KEY_BOX_BYTES = 6144
 TOTAL_BOX_BYTES = 96
 SESSION_BOX_BYTES = 424
@@ -102,15 +105,15 @@ def session_box_name(gen: int) -> bytes:
     return b"s:" + gen.to_bytes(8, "big")
 
 
-def m4_submit_update_box_sizes(gen: int, key_box_indices: set[int], *, include_forks: bool = True,
+def m4_submit_update_box_sizes(gen: int, key_box_indices: set[int], *,
                                 include_total: bool = False) -> dict[bytes, int]:
     """§7.4 example B: the real box set `submit_update` touches for a given
-    mode -- `forks` (always, for the fork-row lookup) plus every key box
-    the bitfield walk visits (direct mode: participant-holding boxes;
-    complement mode: absentee-holding boxes plus `a:<gen>`)."""
+    mode -- every key box the bitfield walk visits (direct mode:
+    participant-holding boxes; complement mode: absentee-holding boxes plus
+    `a:<gen>`). 013 §6.1: the fork-row lookup used to always cost `forks`
+    in here too, but a global-state read consumes no box-reference budget
+    at all, so there is nothing left to add for it."""
     sizes: dict[bytes, int] = {}
-    if include_forks:
-        sizes[b"forks"] = FORKS_BOX_BYTES
     for j in sorted(key_box_indices):
         sizes[key_box_name(gen, j)] = KEY_BOX_BYTES
     if include_total:
@@ -172,11 +175,20 @@ def choose_mode(sync_committee_bits: bytes, gen: int) -> tuple[int, BoxRefPlan]:
     §7.5's own reasoning: at a tie, box count cannot distinguish them, but
     `bitfield.py`'s real per-point opcode cost (217/point, 004 §2.3) can,
     and the mode touching fewer real participants/absentees is cheaper on
-    THAT axis."""
+    THAT axis.
+
+    013 §6.3(c): with `forks` gone, direct mode costs exactly `3*k_d` refs
+    and complement costs `3*k_c + 1` (the extra ref is `a:<gen>`'s 96 B,
+    which `forks` used to share a partial reference with). Direct now wins
+    outright whenever `k_d <= k_c` (today it only won when `k_d < k_c`),
+    and `3*k_d == 3*k_c + 1` has no integer solutions -- so the tie branch
+    below is PROVABLY UNREACHABLE under the revised cost model. It is kept
+    (deleting live code on a proof of unreachability is how the next
+    refactor gets a surprise), not because a tie can still occur."""
     direct_idx = key_box_indices_for_mode(sync_committee_bits, 0)
     complement_idx = key_box_indices_for_mode(sync_committee_bits, 1)
-    direct_sizes = m4_submit_update_box_sizes(gen, direct_idx, include_forks=True, include_total=False)
-    complement_sizes = m4_submit_update_box_sizes(gen, complement_idx, include_forks=True, include_total=True)
+    direct_sizes = m4_submit_update_box_sizes(gen, direct_idx, include_total=False)
+    complement_sizes = m4_submit_update_box_sizes(gen, complement_idx, include_total=True)
     direct_plan = plan_box_refs(direct_sizes)
     complement_plan = plan_box_refs(complement_sizes)
     if direct_plan.refs_required == complement_plan.refs_required:

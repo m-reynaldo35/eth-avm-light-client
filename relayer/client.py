@@ -689,10 +689,18 @@ class EthAvmClient:
             key_refs = [(0, key_box_name(gen, j)) for j in range(8)]
             session_ref = [(0, session_box_name(gen))]
             atc = AtomicTransactionComposer()
+            # 013 §6.4 / §17 item 7: `forks` is no longer a box (the fork
+            # table moved to global state), so the slot it occupied here
+            # MUST be REPLACED, not deleted, by an 8th key-box reference --
+            # this group needs 25 references total (measured, unchanged by
+            # 013: the box-opening group's own total was and is 49,576 B),
+            # and dropping to 7 refs here would silently under-budget it,
+            # reintroducing the exact class of shortfall 009's history
+            # records four times.
             self._add_m4_call(
                 atc, signer, "bootstrap",
                 [boot_args.header, boot_args.committee_root, boot_args.current_sc_branch, bootstrap_root],
-                boxes=[(0, b"forks")] + key_refs[:7],
+                boxes=key_refs[:8],
             )
             self._add_m4_call(atc, signer, "install_open_keys", [], boxes=key_refs)
             self._add_m4_call(atc, signer, "install_open_session", [], boxes=session_ref + key_refs[:7])

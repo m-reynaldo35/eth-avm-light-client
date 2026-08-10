@@ -11,7 +11,7 @@ literal; call sites wrap it in `UInt64(...)`/`Bytes(...)` themselves, or use
 a thin accessor where a value is used from more than one module.
 """
 
-from algopy import Bytes, UInt64, subroutine
+from algopy import UInt64, subroutine
 
 # ---------------------------------------------------------------------------
 # Record `A` layout (§6.1) -- fixed 154 bytes.
@@ -47,23 +47,35 @@ OFF_PIN_PAYER = RECORD_LEN
 # ---------------------------------------------------------------------------
 RING_BOX_PREFIX = b"h:"  # h:<itob(residue)>  -- 10 B
 PIN_BOX_PREFIX = b"p:"  # p:<itob(block_number)> -- 10 B
-FORKS_BOX_NAME = b"forks8"  # 6 B
 
 # ---------------------------------------------------------------------------
-# Fork table row shape (§3.3). 40 bytes/row, 8-row capacity.
+# Fork table row shape (§3.3). 40 bytes/row, 8-row capacity. Rows live in
+# GLOBAL STATE, keyed by `FORK_ROW_KEY_PREFIX + itob(index)[7:8]` (docs/
+# design/013 §3.1/§3.3 -- moved off box storage so create()'s MBR is charged
+# to the creator, not the app's own not-yet-existent account):
 #   activation_epoch      uint64 (8B)
 #   g_state_root          uint64 (8B)
 #   g_receipts_root       uint64 (8B)
 #   g_block_number        uint64 (8B)
 #   g_block_roots_base    uint64 (8B)
-# `fork_count` lives in GLOBAL STATE (mirrors M4's own `forks.py` pattern,
-# named in this module's file-layout comment as the module to mirror), not
-# as an in-box length byte -- one less byte read per lookup, and consistent
-# with the sibling M4 table this module is deliberately modelled on.
+# `fork_count` lives in its own GLOBAL STATE slot (mirrors M4's own
+# `forks.py` pattern, named in this module's file-layout comment as the
+# module to mirror).
 # ---------------------------------------------------------------------------
 FORK_ROW_BYTES = 40
 FORK_TABLE_CAPACITY = 8
-FORKS_BOX_BYTES = FORK_ROW_BYTES * FORK_TABLE_CAPACITY  # 320 B
+if FORK_TABLE_CAPACITY > 256:
+    # Row keys are FORK_ROW_KEY_PREFIX + itob(index)[7:8] -- a single index
+    # byte -- so capacity above 256 would alias row i with row i + 256
+    # (docs/design/013 §3.1, §9.1). A bare module-scope `assert` is REJECTED
+    # unconditionally by puyapy 5.9.0 (`visit_assert_stmt` always raises
+    # "unsupported statement type at module level" -- measured, not what
+    # 013 §17 item 3 assumed); puyapy's `if` DOES constant-fold its
+    # condition and skips an unreached branch entirely (`visit_if_stmt`),
+    # so this raises a real compile error only if capacity is ever bumped
+    # past the safe range, and compiles away to nothing otherwise.
+    assert False, "FORK_TABLE_CAPACITY must be <= 256 for the single-index-byte row key"
+FORK_ROW_KEY_PREFIX = b"g"
 
 UINT64_MAX = 2**64 - 1
 
@@ -81,8 +93,3 @@ ATTEST_SELECTOR_METHOD = "attest(uint64)154"  # ARC-4 method signature attest is
 @subroutine
 def record_len() -> UInt64:
     return UInt64(RECORD_LEN)
-
-
-@subroutine
-def forks_box_name() -> Bytes:
-    return Bytes(FORKS_BOX_NAME)

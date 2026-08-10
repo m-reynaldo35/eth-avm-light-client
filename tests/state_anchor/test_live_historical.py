@@ -215,7 +215,7 @@ def real_historical_anchor(finalized_m4, historical_fixture, compiled_anchor, ac
     sender, sk = account
 
     anchor = Arc4Harness(compiled_anchor["TrustedRootAnchor"], sender, sk)
-    anchor.create([sender, h.app_id, RING_N], extra_pages=1, boxes=[(0, b"forks8")], fund_app=15_000_000)
+    anchor.create([sender, h.app_id, RING_N], extra_pages=1, fund_app=15_000_000)
     anchor.ring_n = RING_N
     anchor.submit([{
         "method": "ring_init_chunk", "args": [RING_N],
@@ -228,7 +228,6 @@ def real_historical_anchor(finalized_m4, historical_fixture, compiled_anchor, ac
     anchor.submit([{
         "method": "append_fork_row",
         "args": [0, G_STATE_ROOT, G_RECEIPTS_ROOT, G_BLOCK_NUMBER, fx["g_block_roots_base_fulu"]],
-        "boxes": [(0, b"forks8")],
     }])
 
     callee_id, issuer_id = donors

@@ -135,11 +135,14 @@ def test_d3_resume_appends_only_missing_fork_rows(algod_client, account, manifes
     from deploy import create as create_mod
 
     gvr = bytes.fromhex(target.contracts["m4"].genesis_validators_root[2:])
+    # 013 §5.1 item 2 / §17 item 6: schema from the compiled ARC-56, never a
+    # literal pair; §17 item 7: create() creates no box, so no `boxes=`.
+    gs = compiled["arc56"]["state"]["schema"]["global"]
     app_id, funded = create_mod.predict_fund_and_create(
         algod_client, sender, sk, method=method, method_args=[target.governance, gvr],
         approval_bytes=compiled["approval"], clear_bytes=compiled["clear"],
-        global_schema=transaction.StateSchema(13, 7), local_schema=transaction.StateSchema(0, 0),
-        extra_pages=3, boxes=[(0, b"forks")],
+        global_schema=transaction.StateSchema(gs["ints"], gs["bytes"]), local_schema=transaction.StateSchema(0, 0),
+        extra_pages=3,
     )
     manifest.set_app("m4", app_id=app_id, approval_sha256=compiled["approval_sha256"],
                       clear_sha256=compiled["clear_sha256"], schema_version=1, creator=sender,
@@ -241,13 +244,37 @@ def test_d7_d8_predicted_mbr_matches_real_and_no_stranded_funds(deployed, algod_
     from algosdk import logic
 
     manifest = deployed["manifest"]
-    expectations = {"m4": 334_900, "m8": 777_700}
+    # 013 §4/§5.4: create() creates no box at all any more (the fork table
+    # moved to global state, whose MBR the CREATOR pays at create time), so
+    # the APP account's min-balance drops to the floor plus whatever OTHER
+    # box family it holds -- for m4, nothing (334,900 -> 100,000); for m8,
+    # just its ring boxes at ring_n=8 (777,700 -> 644,800, measured:
+    # 100,000 + 8*box_mbr(10,154), forks8's 132,900 term is gone).
+    expectations = {"m4": 100_000, "m8": 644_800}
     for name, expected in expectations.items():
         app_id = manifest.apps[name]["app_id"]
         addr = logic.get_application_address(app_id)
         info = algod_client.account_info(addr)
         assert info["min-balance"] == expected, f"{name} min-balance {info['min-balance']} != {expected}"
-        assert info["amount"] == info["min-balance"], f"{name} has stranded funds (G8-M10)"
+        # G8-M10's real property is "no STRANDED (excess/idle) funds", i.e.
+        # `amount - min-balance` must never be POSITIVE -- `deploy/
+        # inspect.py::verify_app` already states this precisely (a
+        # NEGATIVE value is "not yet funded", not "stranded"). Before 013,
+        # `amount == min-balance` held for every app because create() always
+        # funded the app account to exactly its create-time MBR requirement.
+        # 013 changes this for m4 specifically: create() needs ZERO
+        # pre-funding and `apply()` performs no separate top-up for m4
+        # (§1.2 non-goal -- that is `fund_for_install`'s job, a distinct,
+        # explicit, later step), so m4's app account is now genuinely
+        # UNFUNDED (amount == 0) immediately after `apply()`, which is
+        # correct, not a regression. m8 IS still topped up to its own real
+        # ring-box requirement inside `apply()`, so `amount == min-balance`
+        # continues to hold for m8 exactly as before.
+        assert info["amount"] <= info["min-balance"], f"{name} has stranded funds (G8-M10)"
+        if name == "m4":
+            assert info["amount"] == 0, "m4's app account must be genuinely unfunded after 013 (G8-R13)"
+        else:
+            assert info["amount"] == info["min-balance"], f"{name} has stranded funds (G8-M10)"
 
     m7_id = manifest.apps["m7"]["app_id"]
     addr = logic.get_application_address(m7_id)
@@ -283,10 +310,31 @@ def test_d10_plan_needs_no_signer(algod_client, account, manifest_dir):
 
 
 # ---------------------------------------------------------------------------
-# D-11: two-stage funding, race path -- fund the wrong predicted id
-# deliberately; apply detects the mismatch and refuses to continue.
+# D-11: previously "two-stage funding, race path -- fund the wrong predicted
+# id deliberately; apply detects the mismatch and refuses to continue."
+#
+# 013 §5.4/§0/G8-R13: that scenario is no longer reachable through M4. M4's
+# `create()` now creates no box at all (the fork table moved to global
+# state), so `simulate_create` reports `required_microalgo == 0` and
+# `ok_unfunded == True`, and `predict_fund_and_create` takes its
+# `ok_unfunded` branch -- which skips BOTH the funding Payment AND the
+# `app_id != predicted_id` mismatch check entirely (`deploy/create.py`,
+# unchanged by 013). There is no longer anything to fund before create()
+# runs, so there is no race left to detect: `CreateRaced` is now
+# STRUCTURALLY unreachable for M4, exactly as 013 §5.4 predicts -- not
+# because the exception was removed, but because the funding step that
+# could lose the race no longer executes.
+#
+# This test is rewritten to prove that structural claim directly and
+# live, rather than test a scenario M4 can no longer produce: even
+# deliberately funding the WRONG address before the real create (the
+# thing that used to cause a race) has no effect any more -- the real
+# create succeeds regardless, because it never depended on that funding.
+# `test_d11_create_raced_exception_reports_bounded_loss` (below, offline)
+# keeps `CreateRaced` itself under test for any FUTURE contract that does
+# create a box at create() time -- the exception class is unchanged.
 # ---------------------------------------------------------------------------
-def test_d11_create_raced_detected_and_refused(algod_client, account):
+def test_d11_create_needs_no_prefunding_and_cannot_be_raced(algod_client, account):
     from algosdk import logic
 
     from deploy import create as create_mod
@@ -299,53 +347,49 @@ def test_d11_create_raced_detected_and_refused(algod_client, account):
 
     method = Method.undictify(next(m for m in compiled["arc56"]["methods"] if m["name"] == "create"))
     gvr = bytes.fromhex("4b363db94e286120d76eb905340fdd4e54bfe9f06bf33ff6cf5ad27f511bfe95")
+    gs = compiled["arc56"]["state"]["schema"]["global"]
 
     sim = create_mod.simulate_create(
         algod_client, sender, method=method, method_args=[sender, gvr],
         approval_bytes=compiled["approval"], clear_bytes=compiled["clear"],
-        global_schema=transaction.StateSchema(13, 7), local_schema=transaction.StateSchema(0, 0),
-        extra_pages=3, boxes=[(0, b"forks")],
+        global_schema=transaction.StateSchema(gs["ints"], gs["bytes"]), local_schema=transaction.StateSchema(0, 0),
+        extra_pages=3,
     )
-    assert sim.required_microalgo > 0
+    # G8-R13 / F-11 / F-12's structural claim, measured directly: a real
+    # create needs ZERO pre-funding.
+    assert sim.required_microalgo == 0, f"M4's create() must need zero pre-funding after 013, got {sim.required_microalgo}"
+    assert sim.ok_unfunded is True
 
-    # Deliberately fund the WRONG predicted address (off by one from the
-    # real recipe) to force a mismatch on the real create.
-    wrong_predicted = sim.predicted_app_id  # missing the real +1 offset
-    wrong_address = logic.get_application_address(wrong_predicted)
+    # Deliberately fund an address that has NOTHING to do with the real
+    # create (the exact thing that used to matter: funding the WRONG
+    # predicted address) -- since create() touches no box and no app
+    # account balance at all, this is now provably irrelevant.
+    decoy_address = logic.get_application_address(sim.predicted_app_id + 999)
     sp = algod_client.suggested_params()
     sp.flat_fee = True
     sp.fee = 1000
-    fund_txn = transaction.PaymentTxn(sender, sp, wrong_address, sim.required_microalgo)
+    fund_txn = transaction.PaymentTxn(sender, sp, decoy_address, 100_000)
     stxn = fund_txn.sign(sk)
     txid = algod_client.send_transaction(stxn)
     transaction.wait_for_confirmation(algod_client, txid, 4)
 
-    # Now build+send the real create through the SAME atc helper the real
-    # recipe uses -- it will land at wrong_predicted + 1 (since our own
-    # funding payment just consumed a TxnCounter slot too), NOT at
-    # wrong_predicted, reproducing a genuine race/mis-prediction.
-    from algosdk.atomic_transaction_composer import AccountTransactionSigner, AtomicTransactionComposer
-
-    atc = AtomicTransactionComposer()
-    signer = AccountTransactionSigner(sk)
-    sp2 = algod_client.suggested_params()
-    sp2.flat_fee = True
-    sp2.fee = 1000
-    atc.add_method_call(
-        app_id=0, method=method, sender=sender, sp=sp2, signer=signer,
-        method_args=[sender, gvr], on_complete=transaction.OnComplete.NoOpOC,
-        approval_program=compiled["approval"], clear_program=compiled["clear"],
-        global_schema=transaction.StateSchema(13, 7), local_schema=transaction.StateSchema(0, 0),
-        extra_pages=3, boxes=[(0, b"forks")],
+    # The real, unfunded create succeeds regardless -- `predict_fund_and_
+    # create`'s own `ok_unfunded` branch (deploy/create.py, unchanged).
+    app_id, funded = create_mod.predict_fund_and_create(
+        algod_client, sender, sk, method=method, method_args=[sender, gvr],
+        approval_bytes=compiled["approval"], clear_bytes=compiled["clear"],
+        global_schema=transaction.StateSchema(gs["ints"], gs["bytes"]), local_schema=transaction.StateSchema(0, 0),
+        extra_pages=3,
     )
-    with pytest.raises(Exception):
-        # The underfunded address (wrong_predicted + 1, the REAL assignee)
-        # never got funded -- this fails exactly like the original
-        # unfunded-create case, proving the bounded-loss property: the
-        # money that WAS spent (on wrong_predicted) is gone (§10.4), but no
-        # further money follows it, and the tool never proceeds pretending
-        # wrong_predicted is the real app.
-        atc.execute(algod_client, 4)
+    assert app_id > 0
+    assert funded == 0, "create() must not have needed any funding at all"
+
+    # And, exactly as G8-R13 requires: the app account is genuinely
+    # unfunded (never paid anything) immediately after create.
+    info = algod_client.account_info(logic.get_application_address(app_id))
+    assert info["amount"] == 0, f"app account should never have been funded, got {info['amount']}"
+    boxes = algod_client.application_boxes(app_id)
+    assert boxes.get("boxes", []) == [], "create() must create no box at all"
 
 
 def test_d11_create_raced_exception_reports_bounded_loss():

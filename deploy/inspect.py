@@ -17,22 +17,48 @@ def approval_sha256(algod_client, app_id: int) -> str:
     return hashlib.sha256(approval).hexdigest()
 
 
-def decode_global_state(algod_client, app_id: int) -> dict:
-    """Puya stores each global-state field under the literal Python
-    attribute name as the on-chain key (confirmed against the real ARC-56
-    artifacts' `state.keys.global.<name>.key` base64 fields, which all
-    decode to plain ASCII attribute names -- e.g. `Z292` -> `gov`)."""
+def decode_global_state_raw(algod_client, app_id: int) -> dict:
+    """Like `decode_global_state`, but keys stay raw `bytes` rather than a
+    utf-8-decoded `str` (docs/design/013 §5.1 item 4). Needed for the M4/M8
+    fork-row family: its keys are binary (`FORK_ROW_KEY_PREFIX +
+    itob(index)[7:8]`), and while index bytes 0x00-0x0F (M4) / 0x00-0x07
+    (M8) happen to decode as valid UTF-8 today -- they are ASCII control
+    bytes -- that is luck at the current capacities (16/8), not a property
+    to build a decoder on (013 §5.1 item 4's own warning: it breaks at
+    index 0x80 if capacity is ever raised past 128). Every other caller
+    that wants named-field keys should still decode through
+    `decode_global_state`."""
     info = algod_client.application_info(app_id)
     gs = info["params"].get("global-state", [])
     decoded = {}
     for entry in gs:
-        key = base64.b64decode(entry["key"]).decode("utf-8", errors="replace")
+        key = base64.b64decode(entry["key"])
         v = entry["value"]
         if v.get("type") == 1:  # bytes
             decoded[key] = base64.b64decode(v.get("bytes", ""))
         else:
             decoded[key] = v.get("uint", 0)
     return decoded
+
+
+def decode_global_state(algod_client, app_id: int) -> dict:
+    """Puya stores each global-state field under the literal Python
+    attribute name as the on-chain key (confirmed against the real ARC-56
+    artifacts' `state.keys.global.<name>.key` base64 fields, which all
+    decode to plain ASCII attribute names -- e.g. `Z292` -> `gov`)."""
+    raw = decode_global_state_raw(algod_client, app_id)
+    return {k.decode("utf-8", errors="replace"): v for k, v in raw.items()}
+
+
+def filter_named_keys_raw(gs_raw: dict) -> dict:
+    """Drops fork-row-family binary keys (`FORK_ROW_KEY_PREFIX` + one index
+    byte = 2 raw bytes total) from a global-state dump meant for humans
+    (docs/design/013 §15.2 item 6, §17 item 8). Every genuinely NAMED
+    global-state key in this project's contracts is >= 3 bytes (013 §2,
+    measured: the shortest is `gov`), so any 2-byte key is unambiguously a
+    row-family key -- visible only via `deploy inspect --forks`, never in
+    the default dump."""
+    return {k: v for k, v in gs_raw.items() if len(k) != 2}
 
 
 def account_balance(algod_client, app_id: int) -> dict:

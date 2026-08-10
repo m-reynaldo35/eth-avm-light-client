@@ -177,20 +177,35 @@ def test_t7_marker_typo_is_a_collection_error(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# T-8: plan_box_refs at 512/512 participation (empty absentee set) -- a
-# zero-box plan, `forks` still referenced (§10 item 7, never exercised live).
+# T-8: plan_box_refs at 512/512 participation (empty absentee set), and at
+# 0/512 participation (empty participant set) -- both never exercised live.
+#
+# 013 §6.1/§7.3: the fork table moved to global state, which costs no
+# box-reference budget at all, so `forks` is no longer in this plan at any
+# participation level. Complement mode's edge case still carries `a:<gen>`
+# (the total box) and is unchanged. Direct mode's edge case USED to be
+# `(b"forks",)` -- now it is a genuinely EMPTY plan (`distinct_boxes ==
+# ()`, `refs_required == 0`, `txns_required == 0`, docs/design/
+# 013-fork-table-global-state.md §8 case 8). That is a new degenerate
+# shape, not a bug: `submit_update` at 0/512 participation is rejected
+# on-chain by `MIN_SYNC_COMMITTEE_PARTICIPANTS` long before box references
+# ever matter, so an empty plan for a call that can never actually succeed
+# is safe.
 # ---------------------------------------------------------------------------
 def test_t8_plan_box_refs_at_full_participation_never_exercised_live():
-    from relayer.group.boxes import m4_submit_update_box_sizes, plan_box_refs
+    from relayer.group.boxes import m4_submit_update_box_sizes, plan_box_refs, total_box_name
 
     # complement mode with an empty absentee set (real 512/512 participation)
-    sizes = m4_submit_update_box_sizes(1, set(), include_forks=True, include_total=True)
+    sizes = m4_submit_update_box_sizes(1, set(), include_total=True)
     plan = plan_box_refs(sizes)
-    assert b"forks" in plan.distinct_boxes
-    assert plan.refs_required >= 1  # forks + total, never a truly empty plan
+    assert plan.distinct_boxes == (total_box_name(1),)
+    assert plan.refs_required == 1  # just a:<gen>, never a truly empty plan
     assert plan.txns_required == 1
 
     # direct mode with an empty participant set (0/512, the dual edge case)
-    sizes_direct = m4_submit_update_box_sizes(1, set(), include_forks=True, include_total=False)
+    # -- genuinely empty now that `forks` is gone (013 §8 case 8).
+    sizes_direct = m4_submit_update_box_sizes(1, set(), include_total=False)
     plan_direct = plan_box_refs(sizes_direct)
-    assert plan_direct.distinct_boxes == (b"forks",)
+    assert plan_direct.distinct_boxes == ()
+    assert plan_direct.refs_required == 0
+    assert plan_direct.txns_required == 0

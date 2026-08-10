@@ -81,10 +81,15 @@ def _deploy_m4() -> "SyncCommitteeLiveHarness":  # noqa: F821
 
     h = SyncCommitteeLiveHarness()
     h.create(h.sender, bytes.fromhex(GENESIS_VALIDATORS_ROOT_HEX))
+    # 013 §0/§5.4: create() no longer pre-funds the app account (the fork
+    # table moved to global state) -- M4's OTHER box families (k:/s:/a:,
+    # untouched by 013) still need the app account funded before the
+    # install flow creates them, so that happens here, as an ordinary
+    # post-create payment to the now-known address (no prediction, no race).
+    h.fund_app()
     h.submit([(
         "append_fork_row",
         [FULU_FORK_EPOCH, FULU_FORK_VERSION, FINALITY_GINDEX, CURRENT_SC_GINDEX, NEXT_SC_GINDEX],
-        [(0, b"forks")],
     )])
     return h
 
@@ -213,10 +218,23 @@ def test_l2_submit_update_all_8_key_boxes_g1_m9(env_b):
             "participation clustered into few boxes, this can happen), not a bug"
         )
 
-    sizes = m4_submit_update_box_sizes(1, idx, include_forks=True, include_total=(forced_mode == 1))
+    sizes = m4_submit_update_box_sizes(1, idx, include_total=(forced_mode == 1))
     plan = plan_box_refs(sizes)
-    assert plan.refs_required >= 25, f"k=8 must need >=25 box refs per §7.4's closed form, got {plan.refs_required}"
-    assert plan.txns_required >= 4, "k=8 must need >=4 transactions to carry the box refs, not the old fixed 2"
+    # 013 §6.2: with `forks` gone, direct mode's k=8 minimum drops from
+    # 25 refs/4 txns to 24 refs/3 txns exactly (`ceil(8*6144/2048) == 24`);
+    # complement mode's k=8 minimum is UNCHANGED at 25 refs/4 txns (it also
+    # carries `a:<gen>`, 96 B, which used to share a partial reference with
+    # `forks` and now claims that reference alone). Both are still well
+    # above the old fixed 2-transaction assumption this test guards against.
+    min_refs, min_txns = (25, 4) if forced_mode == 1 else (24, 3)
+    assert plan.refs_required >= min_refs, (
+        f"k=8 mode={forced_mode} must need >={min_refs} box refs per §7.4/013 §6.2's closed form, "
+        f"got {plan.refs_required}"
+    )
+    assert plan.txns_required >= min_txns, (
+        f"k=8 mode={forced_mode} must need >={min_txns} transactions to carry the box refs, "
+        "not the old fixed 2"
+    )
 
     popcount = sum(1 for i in range(512) if m4bits_bit_set(bits, i))
     try:
@@ -274,7 +292,7 @@ def env_a_anchor(env_a, donor_pair):
     compiled = puya_compile(REPO_ROOT / "contracts" / "state_anchor" / "anchor_app.py")
     anchor = Arc4Harness(compiled["TrustedRootAnchor"], donor_pair["sender"], donor_pair["sk"])
     ring_n = 8
-    anchor.create([donor_pair["sender"], h.app_id, ring_n], extra_pages=1, boxes=[(0, b"forks8")], fund_app=15_000_000)
+    anchor.create([donor_pair["sender"], h.app_id, ring_n], extra_pages=1, fund_app=15_000_000)
     anchor.ring_n = ring_n
     anchor.submit([{
         "method": "ring_init_chunk", "args": [ring_n],
@@ -283,7 +301,7 @@ def env_a_anchor(env_a, donor_pair):
     # 802/803/806: EL fold gindices, unchanged since Deneb (test_live_e2e.py's
     # own citation); 69: Fulu's g_block_roots_base (real_beacon_state.py's
     # own independently-derived value, matching Electra's).
-    anchor.submit([{"method": "append_fork_row", "args": [0, 802, 803, 806, 69], "boxes": [(0, b"forks8")]}])
+    anchor.submit([{"method": "append_fork_row", "args": [0, 802, 803, 806, 69]}])
 
     client = env_a["client"]
     client.config.m8_app_id = anchor.app_id
@@ -575,8 +593,10 @@ def test_l7_resume_install_from_cursor(checkpoint_data, donor_pair):
     key_refs = [(0, key_box_name(1, j)) for j in range(8)]
     session_ref = [(0, session_box_name(1))]
     atc = AtomicTransactionComposer()
+    # 013 §6.4/§17 item 7: `forks` is no longer a box -- REPLACED (not
+    # deleted) by an 8th key-box reference so this group stays at 25 refs.
     add_call(atc, "bootstrap", [boot_args.header, boot_args.committee_root, boot_args.current_sc_branch, checkpoint_root],
-             boxes=[(0, b"forks")] + key_refs[:7])
+             boxes=key_refs[:8])
     add_call(atc, "install_open_keys", [], boxes=key_refs)
     add_call(atc, "install_open_session", [], boxes=session_ref + key_refs[:7])
     add_call(atc, "noop_budget", [], boxes=session_ref)
@@ -622,4 +642,82 @@ def test_l7_resume_install_from_cursor(checkpoint_data, donor_pair):
         f"progress file anywhere), submitting the remaining "
         f"{install_detail['chunks_submitted_this_call']} install_chunk groups for real and "
         f"reaching cur_gen=1."
+    )
+
+
+# ---------------------------------------------------------------------------
+# L-9 (013 §6.3(a), §13's open item): a REAL, live measurement of the k = 5
+# filler-transaction change -- "the single riskiest line in the whole
+# change" per 013's own words. Real live participation almost never lands
+# on EXACTLY k=5 key boxes (§6.3a's own honest note), so this forces it by
+# constructing the box-reference plan directly (the same
+# `m4_submit_update_box_sizes`/`plan_box_refs` `submit_update_group` itself
+# calls) and driving `EthAvmClient.submit_update_group`'s REAL, unmodified
+# group-building code against a REAL dev-mode algod (real `suggested_
+# params`, real donor/app-call transactions built and simulated) -- the
+# ONLY thing intercepted is the final `submit_run` call, so the measurement
+# never depends on a real BLS signature or a real installed committee
+# (irrelevant to what this test measures: the group's SHAPE, not whether it
+# would ultimately verify).
+# ---------------------------------------------------------------------------
+def test_l9_k5_filler_transaction_count_measured_live(donor_pair):
+    """013 §6.3(a): measured (this pass, real dev-mode algod), not reasoned
+    about -- at k=5 key-box participation, `submit_update_group` builds a
+    group with ZERO `noop_budget` filler transactions, down from 1 before
+    013 (16 refs -> 15 refs; 16 % 8 == 0 leaves a 1-ref remainder needing a
+    filler, 15 % 8 == 7 does not)."""
+    if not ALGOD_AVAILABLE:
+        pytest.skip("no dev-mode algod reachable")
+    from types import SimpleNamespace
+
+    import relayer.client as client_mod
+    from relayer.group.boxes import key_box_name, m4_submit_update_box_sizes, plan_box_refs
+
+    h = _deploy_m4()
+    client = _client_for(h, donor_pair)
+
+    gen = 1
+    k5_indices = {0, 1, 2, 3, 4}
+    sizes = m4_submit_update_box_sizes(gen, k5_indices, include_total=False)
+    plan = plan_box_refs(sizes)
+    assert plan.refs_required == 15, f"013 §6.2: k=5 direct mode must need exactly 15 refs, got {plan.refs_required}"
+    assert plan.distinct_boxes == tuple(sorted(key_box_name(gen, j) for j in k5_indices))
+
+    captured = {}
+
+    def fake_submit_run(algod_client, build_group, *, n_app_calls_in_group, dry_run, **kwargs):
+        # Real `build_group(1)` call -- real `suggested_params()`/donor-
+        # transaction construction against real dev-mode algod, exactly
+        # what `submit_run` itself would do for its own sizing simulate --
+        # just never actually submitted (intercepted here instead).
+        atc = build_group(1)
+        captured["n_txns"] = len(atc.build_group())
+        captured["n_app_calls_in_group"] = n_app_calls_in_group
+        return None  # submit_update_group's own return value is unused by this test
+
+    real_submit_run = client_mod.submit_run
+    client_mod.submit_run = fake_submit_run
+    try:
+        args = SimpleNamespace(
+            attested_header=b"\x00" * 112, finalized_header=b"\x00" * 112,
+            finality_branch=b"", next_committee_root=b"\x00" * 32, next_committee_branch=b"",
+            sync_committee_bits=b"\x00" * 64, signature=b"\x00" * 192, signature_slot=0,
+        )
+        client.submit_update_group(gen, args, 0, plan)
+    finally:
+        client_mod.submit_run = real_submit_run
+
+    assert "n_txns" in captured, "fake_submit_run was never invoked -- submit_update_group's call path changed"
+    # 1 donor + 0 noop_budget fillers (15 refs: submit_update claims 8,
+    # donor claims the remaining 7 -- exactly enough, no filler needed) + 1
+    # submit_update = 2 transactions total, down from 3 pre-013 (1 filler).
+    assert captured["n_txns"] == 2, (
+        f"013 §6.3(a): k=5 must build a 2-transaction group (donor + "
+        f"submit_update, ZERO noop_budget fillers), got {captured['n_txns']}"
+    )
+    print(
+        f"\n013 §6.3(a)/§13 REAL LIVE MEASUREMENT: k=5 direct-mode plan needs "
+        f"{plan.refs_required} refs (013 §6.2's exact prediction) and "
+        f"submit_update_group built a {captured['n_txns']}-transaction group "
+        f"-- 0 noop_budget fillers, down from 1 pre-013."
     )

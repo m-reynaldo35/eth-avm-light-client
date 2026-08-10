@@ -23,9 +23,11 @@ VERIFIER_SRC = REPO_ROOT / "contracts" / "sync_committee" / "verifier.py"
 
 SIM_EXTRA_BUDGET_CAP = 320_000
 # 8 key boxes (6,144 B) + 1 session box (424 B) per generation, x2 (bootstrap
-# opens gen 1; some tests open a second session) + the `forks` box (576 B) +
-# headroom. Comfortably covers the ~19.7 ALGO/generation the design doc
-# measures (§8.2) twice over.
+# opens gen 1; some tests open a second session) + headroom. Comfortably
+# covers the ~19.7 ALGO/generation the design doc measures (§8.2) twice
+# over. 013 §4: no `forks` box term any more -- the fork table's MBR is
+# creator-side global-state MBR, paid at create time, not app-account box
+# MBR funded here.
 APP_FUNDING_MICROALGO = 45_000_000
 
 
@@ -70,92 +72,77 @@ class SyncCommitteeLiveHarness:
         self.app_id = None  # set by create()
 
     def create(self, governance_addr: str, genesis_validators_root: bytes) -> int:
-        """Real, committed `create()` call. `create()`'s body calls
-        `forks.forks_box_create()` unconditionally, and box MBR is charged
-        against the APP's own account -- so the app account must already
-        hold funds by the moment `create()` executes, before its address is
-        knowable. Resolved the same way any Algorand tool does: deploy a
-        trivial throwaway app first to learn the network's next-app-id
-        counter, fund `predicted_id + 1`'s address in an ordinary preceding
-        transaction, then submit the real create.
+        """Real, committed `create()` call.
 
-        The predicted id is `probe_id + 2`, not `probe_id + 1`: Algorand's
-        `TxnCounter` advances by one per CONFIRMED TRANSACTION OF ANY KIND,
-        not merely per creation (confirmed empirically). The probe-fund-
-        create sequence is wrapped in a bounded retry loop for the same
-        reason `tests/state_anchor/harness.py::Arc4Harness.create` is."""
-        from algosdk import transaction, logic
+        013 §0/§3/§5.4: `create()` used to call `forks.forks_box_create()`
+        unconditionally, and box MBR is charged against the APP's own
+        account -- so the app account had to already hold funds by the
+        moment `create()` executed, before its address was knowable
+        (`get_application_address` is a deterministic function of the app
+        id, but the id itself is assigned only on confirmation). That forced
+        a probe-fund-create dance: deploy a throwaway app first to learn the
+        network's next-app-id counter, fund the PREDICTED address in an
+        ordinary preceding transaction, then submit the real create and
+        retry if the id moved (`docs/design/013-fork-table-global-state.md`
+        §0 -- this exact race is what failed 40+ consecutive times on real
+        mainnet and is the reason 013 exists at all).
+
+        This revision moves the fork table into global state, whose MBR is
+        charged to the CREATOR -- an account that already exists. `create()`
+        now creates no box at all, needs no pre-funding of the app account,
+        and there is no id to predict and no race to lose: a single,
+        ordinary, unfunded `add_method_call(app_id=0, ...)` is the whole
+        thing (§17 item 13: this docstring must describe the mechanism that
+        exists now, not the defect that used to require the dance above)."""
+        from algosdk import transaction
         from algosdk.abi import Method
         from algosdk.atomic_transaction_composer import (
             AccountTransactionSigner,
             AtomicTransactionComposer,
         )
 
-        probe_teal = "#pragma version 10\nint 1\nreturn\n"
-        probe_compiled = compile_teal(self.algod, probe_teal)
+        atc = AtomicTransactionComposer()
+        signer = AccountTransactionSigner(self.sk)
+        method = Method.undictify(self.methods["create"])
+        sp = self.algod.suggested_params()
+        sp.flat_fee = True
+        sp.fee = 1000
+        atc.add_method_call(
+            app_id=0,
+            method=method,
+            sender=self.sender,
+            sp=sp,
+            signer=signer,
+            method_args=[governance_addr, genesis_validators_root],
+            on_complete=transaction.OnComplete.NoOpOC,
+            approval_program=self.approval_compiled,
+            clear_program=self.clear_compiled,
+            global_schema=transaction.StateSchema(self.global_schema_ints, self.global_schema_bytes),
+            local_schema=transaction.StateSchema(0, 0),
+            extra_pages=3,
+        )
+        result = atc.execute(self.algod, 4)
+        confirmed = self.algod.pending_transaction_info(result.tx_ids[0])
+        self.app_id = confirmed["application-index"]
+        return self.app_id
 
-        last_error = None
-        for _attempt in range(5):
-            sp0 = self.algod.suggested_params()
-            probe_txn = transaction.ApplicationCreateTxn(
-                sender=self.sender,
-                sp=sp0,
-                on_complete=transaction.OnComplete.NoOpOC,
-                approval_program=probe_compiled,
-                clear_program=probe_compiled,
-                global_schema=transaction.StateSchema(0, 0),
-                local_schema=transaction.StateSchema(0, 0),
-            )
-            probe_stxn = probe_txn.sign(self.sk)
-            probe_txid = self.algod.send_transaction(probe_stxn)
-            probe_confirmed = transaction.wait_for_confirmation(self.algod, probe_txid, 4)
-            predicted_id = probe_confirmed["application-index"] + 2
+    def fund_app(self, amount: int = APP_FUNDING_MICROALGO) -> None:
+        """An ordinary, POST-create funding payment to the app account --
+        013 §0/§5.4: M4's OTHER box families (`k:`/`s:`/`a:`, install/
+        session/aggregate) are untouched by this revision and still need
+        the app account funded before `install_open_keys`/
+        `install_open_session`/`install_finalize` create them. Before 013,
+        this same payment had to race the create transaction (fund a
+        PREDICTED address before the app existed); now `self.app_id` is
+        already a real, confirmed id, so this is just a plain `PaymentTxn`
+        to a known address -- no prediction, no race, no retry loop."""
+        from algosdk import logic, transaction
 
-            predicted_address = logic.get_application_address(predicted_id)
-            sp1 = self.algod.suggested_params()
-            fund_txn = transaction.PaymentTxn(
-                sender=self.sender, sp=sp1, receiver=predicted_address, amt=APP_FUNDING_MICROALGO
-            )
-            fund_stxn = fund_txn.sign(self.sk)
-            fund_txid = self.algod.send_transaction(fund_stxn)
-            transaction.wait_for_confirmation(self.algod, fund_txid, 4)
-
-            atc = AtomicTransactionComposer()
-            signer = AccountTransactionSigner(self.sk)
-            method = Method.undictify(self.methods["create"])
-            sp2 = self.algod.suggested_params()
-            sp2.flat_fee = True
-            sp2.fee = 1000
-            atc.add_method_call(
-                app_id=0,
-                method=method,
-                sender=self.sender,
-                sp=sp2,
-                signer=signer,
-                method_args=[governance_addr, genesis_validators_root],
-                on_complete=transaction.OnComplete.NoOpOC,
-                approval_program=self.approval_compiled,
-                clear_program=self.clear_compiled,
-                global_schema=transaction.StateSchema(self.global_schema_ints, self.global_schema_bytes),
-                local_schema=transaction.StateSchema(0, 0),
-                extra_pages=3,
-                boxes=[(0, b"forks")],  # create() calls forks_box_create() (§4.3)
-            )
-            try:
-                result = atc.execute(self.algod, 4)
-            except Exception as exc:  # noqa: BLE001 -- raced funding target, retry
-                last_error = exc
-                continue
-            confirmed = self.algod.pending_transaction_info(result.tx_ids[0])
-            self.app_id = confirmed["application-index"]
-            if self.app_id != predicted_id:
-                last_error = AssertionError(
-                    f"app id prediction raced: predicted {predicted_id}, got {self.app_id}"
-                )
-                continue
-            return self.app_id
-
-        raise RuntimeError(f"create() failed after retries, last error: {last_error}")
+        address = logic.get_application_address(self.app_id)
+        sp = self.algod.suggested_params()
+        pay_txn = transaction.PaymentTxn(sender=self.sender, sp=sp, receiver=address, amt=amount)
+        txid = self.algod.send_transaction(pay_txn.sign(self.sk))
+        transaction.wait_for_confirmation(self.algod, txid, 4)
 
     def submit(self, calls: list, *, boxes: list[tuple[int, bytes]] | None = None) -> list:
         """Real, COMMITTED atomic group of ABI method calls. `calls` is a

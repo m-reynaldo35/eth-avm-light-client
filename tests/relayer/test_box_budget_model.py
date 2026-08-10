@@ -72,17 +72,23 @@ def _bootstrap_and_open_boxes(h: SyncCommitteeLiveHarness):
     """The exact, already-proven §16 box-opening group
     (`tests/sync_committee/test_install_live.py::bootstrapped_session`):
     bootstrap + install_open_keys + install_open_session, 25 total box
-    refs (8+8+8+1), a REAL committed group."""
+    refs (8+8+8+1), a REAL committed group. 013 §0/§5.4: create() no
+    longer pre-funds the app account, so this funds it here instead (an
+    ordinary post-create payment -- M4's k:/s:/a: box families are
+    untouched by 013 and still need it)."""
     h.create(h.sender, b"\x00" * 32)
+    h.fund_app()
     h.submit([
-        ("append_fork_row", [0, b"\x01\x00\x00\x00", FINALITY_GINDEX, CURRENT_SYNC_COMMITTEE_GINDEX, NEXT_SYNC_COMMITTEE_GINDEX], [(0, b"forks")]),
+        ("append_fork_row", [0, b"\x01\x00\x00\x00", FINALITY_GINDEX, CURRENT_SYNC_COMMITTEE_GINDEX, NEXT_SYNC_COMMITTEE_GINDEX]),
     ])
     fx = _build_bootstrap_fixture()
     key_refs = [(0, key_box_name(GEN, j)) for j in range(8)]
     session_ref = [(0, session_box_name(GEN))]
+    # 013 §6.4/§17 item 7: `forks` is no longer a box -- REPLACED (not
+    # deleted) by an 8th key-box reference, keeping this group at 25 refs.
     result = h.submit([
         ("bootstrap", [fx["header"], fx["committee_root"], fx["branch"], fx["trusted_block_root"]],
-         [(0, b"forks")] + key_refs[:7]),
+         key_refs[:8]),
         ("install_open_keys", [], key_refs),
         ("install_open_session", [], session_ref + key_refs[:7]),
         ("noop_budget", [], session_ref),
@@ -143,16 +149,20 @@ def _failure_and_index(grp: dict) -> tuple[str, int | None]:
 def test_bx1_write_and_read_in_one_group_at_the_dedup_hypothesis_refs(fresh_harness):
     h = fresh_harness
     h.create(h.sender, b"\x00" * 32)
+    h.fund_app()
     h.submit([
-        ("append_fork_row", [0, b"\x01\x00\x00\x00", FINALITY_GINDEX, CURRENT_SYNC_COMMITTEE_GINDEX, NEXT_SYNC_COMMITTEE_GINDEX], [(0, b"forks")]),
+        ("append_fork_row", [0, b"\x01\x00\x00\x00", FINALITY_GINDEX, CURRENT_SYNC_COMMITTEE_GINDEX, NEXT_SYNC_COMMITTEE_GINDEX]),
     ])
     fx = _build_bootstrap_fixture()
     key_refs = [(0, key_box_name(GEN, j)) for j in range(8)]
     session_ref = [(0, session_box_name(GEN))]
 
+    # 013 §6.4/§17 item 7: `forks` is no longer a box -- REPLACED (not
+    # deleted) by an 8th key-box reference here too, keeping this group's
+    # write phase at 25 refs (unaffected by 013, §6.4).
     calls = [
         ("bootstrap", [fx["header"], fx["committee_root"], fx["branch"], fx["trusted_block_root"]],
-         [(0, b"forks")] + key_refs[:7]),
+         key_refs[:8]),
         ("install_open_keys", [], key_refs),
         ("install_open_session", [], session_ref + key_refs[:7]),
         ("install_chunk", [0, REAL_COMPRESSED, REAL_UNCOMPRESSED], session_ref + [key_refs[0]]),

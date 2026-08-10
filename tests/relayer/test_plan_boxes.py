@@ -29,18 +29,22 @@ def test_p1_ring_init_chunk_n128_reproduces_g5_m8():
 
 
 # ---------------------------------------------------------------------------
-# P-2: plan_box_refs on submit_update, k = 1..8.
+# P-2: plan_box_refs on submit_update, k = 1..8. 013 §6.2: with `forks`
+# gone (the fork table moved to global state, which costs no box-reference
+# budget at all), direct mode loses exactly one reference at every
+# participation level -- `ceil((6144k + 576)/2048) == 3k+1` (with `forks`)
+# becomes `ceil(6144k/2048) == 3k` exactly (measured, §6.2's table).
 # ---------------------------------------------------------------------------
 @pytest.mark.parametrize(
     "k,expected_refs",
-    [(1, 4), (2, 7), (3, 10), (4, 13), (5, 16), (6, 19), (7, 22), (8, 25)],
+    [(1, 3), (2, 6), (3, 9), (4, 12), (5, 15), (6, 18), (7, 21), (8, 24)],
 )
 def test_p2_submit_update_box_refs_by_participation(k, expected_refs):
     sizes = m4_submit_update_box_sizes(gen=1, key_box_indices=set(range(k)))
     plan = plan_box_refs(sizes)
     assert plan.refs_required == expected_refs
     if k == 8:
-        assert plan.txns_required >= 4
+        assert plan.txns_required >= 3
 
 
 # ---------------------------------------------------------------------------
@@ -75,11 +79,13 @@ def test_p4_replay_observed_live_failures_are_rejected_before_building():
     # And: a group built with the OLD (insufficient) ref count must fail
     # `check_fits` once the real requirement is known to need more
     # transactions than a naive 2-txn `[DonorIssuer, submit_update]` group
-    # provides (8 key boxes -> 25 refs -> ceil(25/8) = 4 transactions
-    # minimum, not the 2 the old code shipped).
-    assert plan_k8.txns_required == 4
+    # provides. 013 §6.2/§6.3(b): with `forks` gone, k=8 direct mode's
+    # minimum drops from 25 refs/4 txns to 24 refs/3 txns exactly
+    # (`ceil(8*6144/2048) == 24` -> `ceil(24/8) == 3`) -- still far more
+    # than the 2 the old code shipped.
+    assert plan_k8.txns_required == 3
     with pytest.raises(ValueError):
-        plan_k8.check_fits(other_real_txns=15)  # 4 + 15 = 19 > 16-txn cap, must reject
+        plan_k8.check_fits(other_real_txns=14)  # 3 + 14 = 17 > 16-txn cap, must reject
 
 
 # ---------------------------------------------------------------------------

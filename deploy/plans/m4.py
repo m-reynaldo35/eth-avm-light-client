@@ -18,15 +18,16 @@ from deploy.mbr import min_extra_pages
 REPO_ROOT = Path(__file__).resolve().parents[2]
 VERIFIER_SRC = REPO_ROOT / "contracts" / "sync_committee" / "verifier.py"
 
-FORKS_BOX_NAME = b"forks"
+FORK_ROW_KEY_PREFIX = b"f"
 FORK_ROW_BYTES = 36
 
 # §5.2 step 4 / §8.2's SEPARATE `deploy fund --app m4 --stage install`
 # subcommand -- deliberately NOT part of `apply`'s own automatic sequence.
 # G8-M10/D-7 requires `amount - min-balance == 0` for m4 right after
-# `apply` (create + fork rows only, no boxes beyond `forks` yet) --
-# eagerly pre-funding to the install level here would strand exactly the
-# same idle-until-M9-installs ALGO §2.3/§10.3 call out as the over-funding
+# `apply` (create + fork rows only, no app-account boxes at all -- the fork
+# table is global state now, 013 §3) -- eagerly pre-funding to the install
+# level here would strand exactly the same idle-until-M9-installs ALGO
+# §2.3/§10.3 call out as the over-funding
 # defect this design fixes (D1). So `apply` stops at "funded, governed" per
 # §1.2's own non-goal, and the install-level top-up is a distinct, explicit,
 # operator-invoked step run immediately before M9's `sync(install=True)` --
@@ -51,20 +52,28 @@ def compile_m4() -> dict:
             "approval_sha256": sha256_hex(approval), "clear_sha256": sha256_hex(clear)}
 
 
-def _read_fork_rows(algod_client, app_id: int) -> list[tuple]:
-    from deploy.inspect import read_box
+def _row_key(index: int) -> bytes:
+    return FORK_ROW_KEY_PREFIX + (index & 0xFF).to_bytes(1, "big")
 
-    try:
-        raw = read_box(algod_client, app_id, FORKS_BOX_NAME)
-    except Exception:
-        return []
-    from deploy.inspect import decode_global_state
+
+def _read_fork_rows(algod_client, app_id: int) -> list[tuple]:
+    """§5.1 item 4 / §17 item 8: rows now live in global state, keyed by raw
+    bytes (`FORK_ROW_KEY_PREFIX + itob(index)[7:8]`) -- `decode_global_state`
+    would mangle them through a utf-8 decode, so this keys off
+    `decode_global_state_raw` instead. §17 item 9 / §8 case 5: a fresh app
+    simply has `fork_count == 0`, so the loop below naturally returns `[]`
+    with no exception handling needed -- the old bare
+    `except Exception: return []` existed to catch a missing `forks` box,
+    which cannot happen once creation touches no box at all."""
+    from deploy.inspect import decode_global_state, decode_global_state_raw
 
     gs = decode_global_state(algod_client, app_id)
     fork_count = gs.get("fork_count", 0)
+    gs_raw = decode_global_state_raw(algod_client, app_id)
     rows = []
     for i in range(fork_count):
-        chunk = raw[i * FORK_ROW_BYTES:(i + 1) * FORK_ROW_BYTES]
+        chunk = gs_raw[_row_key(i)]
+        assert len(chunk) == FORK_ROW_BYTES, f"fork row {i} wrong length: {len(chunk)} != {FORK_ROW_BYTES}"
         activation_epoch = int.from_bytes(chunk[0:8], "big")
         fork_version = chunk[8:12]
         finality_gindex = int.from_bytes(chunk[12:20], "big")
@@ -104,11 +113,22 @@ def apply(algod_client, sender: str, sk: str, target, manifest, *,
         # constant (D3's finding -- a hand-picked `extra_pages` has already
         # been wrong once in this project's own history, for M6).
         extra_pages = min_extra_pages(len(compiled["approval"]), len(compiled["clear"]))
+        # 013 §5.1 item 2 / §17 item 6: the schema MUST come from the
+        # compiler's own `StateTotals`-derived ARC-56 output, never a
+        # hand-typed literal pair -- an off-by-one here is exactly the class
+        # of bug 009's history records four times.
+        gs = compiled["arc56"]["state"]["schema"]["global"]
+        # 013 §5.1 item 3 / §17 item 7: create() creates no box at all now
+        # (the fork table moved to global state, §3), so `boxes=` is simply
+        # omitted -- there is no reference to replace here (unlike the
+        # bootstrap/append_fork_row call sites, which keep 8 references for
+        # budget reasons, §6.4).
         app_id, funded = create_mod.predict_fund_and_create(
             algod_client, sender, sk, method=method, method_args=[target.governance, gvr],
             approval_bytes=compiled["approval"], clear_bytes=compiled["clear"],
-            global_schema=transaction.StateSchema(13, 7), local_schema=transaction.StateSchema(0, 0),
-            extra_pages=extra_pages, boxes=[(0, FORKS_BOX_NAME)],
+            global_schema=transaction.StateSchema(gs["ints"], gs["bytes"]),
+            local_schema=transaction.StateSchema(0, 0),
+            extra_pages=extra_pages,
         )
         manifest.set_app(
             "m4", app_id=app_id, approval_sha256=compiled["approval_sha256"],
@@ -157,6 +177,5 @@ def _append_m4_fork_row(algod_client, sender: str, sk: str, app_id: int, row: tu
     atc.add_method_call(
         app_id=app_id, method=method, sender=sender, sp=sp, signer=signer,
         method_args=[activation_epoch, fork_version, finality_gindex, current_sc, next_sc],
-        boxes=[(0, FORKS_BOX_NAME)],
     )
     atc.execute(algod_client, 4)

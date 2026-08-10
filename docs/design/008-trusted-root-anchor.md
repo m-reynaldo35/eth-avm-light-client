@@ -345,6 +345,12 @@ good enough to ship on:
 
 ### 3.3 The two-dimensional fork table
 
+> **Superseded by [013 §3](013-fork-table-global-state.md#3-the-replacement-mechanism):**
+> the fork table moved from box storage (`forks8`) to global state, for the
+> same create-time-MBR-race reason as M4's table (013 §0). Row encoding,
+> validation, and lookup rules are unchanged; only the storage primitive
+> moved. Left as originally written, per this project's convention.
+
 003 §4.5 warned that M8's gindices are *"fork-dependent in a second way"*. They
 are, and §4 adds a third dimension. The deployed table (box `forks8`,
 governance-appended, append-only, strictly increasing `activation_epoch` — all
@@ -897,6 +903,11 @@ correctness bug wearing a feature's clothes. Resizing means redeploying (§5.7's
 migration note).
 
 ### 6.3 Boxes
+
+> **Superseded by [013 §3](013-fork-table-global-state.md#3-the-replacement-mechanism):**
+> the `fork table` row below (`forks8`) is no longer a box — it moved to
+> global state. The `ring slot`/`pinned` rows are untouched by 013. Left as
+> originally written, per this project's convention.
 
 | box | name | value | MBR (µALGO) | count |
 |---|---|---:|---:|---:|

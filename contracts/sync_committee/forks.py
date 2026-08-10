@@ -3,7 +3,10 @@ append validation, and the two slot-keyed lookups §4.4 requires: fork
 version at `epoch(signature_slot - 1)`, gindices at `epoch(attested_slot)`
 -- two different slots, never collapsed (§15 item 2).
 
-Row shape (§4.3), 36 bytes, stored in box `forks`, append-only:
+Row shape (§4.3), 36 bytes, stored in GLOBAL STATE keyed by
+`FORK_ROW_KEY_PREFIX + itob(index)[7:8]` (docs/design/013 §3.1/§3.3 -- moved
+off box storage so create()'s MBR is charged to the creator, not the app's
+own not-yet-existent account), append-only:
     activation_epoch: uint64 (8B, big-endian box-internal encoding --
                                NOT an SSZ chunk, so no endianness trap here)
     fork_version:      byte[4]
@@ -20,26 +23,32 @@ from algopy import Bytes, UInt64, subroutine, urange, op
 
 FORK_ROW_BYTES = 36
 FORK_TABLE_CAPACITY = 16  # rows; §4.4 "linear scan of <= 10 rows" + headroom
-FORKS_BOX_NAME = b"forks"
-FORKS_BOX_BYTES = FORK_ROW_BYTES * FORK_TABLE_CAPACITY  # 576 B
+if FORK_TABLE_CAPACITY > 256:
+    # Row keys are FORK_ROW_KEY_PREFIX + itob(index)[7:8] -- a single index
+    # byte -- so capacity above 256 would alias row i with row i + 256
+    # (docs/design/013 §3.1, §9.1). A bare module-scope `assert` is REJECTED
+    # unconditionally by puyapy 5.9.0 (`visit_assert_stmt` always raises
+    # "unsupported statement type at module level" -- measured, not what
+    # 013 §17 item 3 assumed); puyapy's `if` DOES constant-fold its
+    # condition and skips an unreached branch entirely (`visit_if_stmt`),
+    # so this raises a real compile error only if capacity is ever bumped
+    # past the safe range, and compiles away to nothing otherwise.
+    assert False, "FORK_TABLE_CAPACITY must be <= 256 for the single-index-byte row key"
+FORK_ROW_KEY_PREFIX = b"f"
 
 UINT64_MAX = 2**64 - 1
 
 
 @subroutine
-def forks_box_create() -> None:
-    _created = op.Box.create(Bytes(FORKS_BOX_NAME), UInt64(FORKS_BOX_BYTES))
-
-
-@subroutine
-def _row_offset(index: UInt64) -> UInt64:
-    return index * FORK_ROW_BYTES
+def _row_key(index: UInt64) -> Bytes:
+    return Bytes(FORK_ROW_KEY_PREFIX) + op.itob(index)[7:8]
 
 
 @subroutine
 def _read_row(index: UInt64) -> tuple[UInt64, Bytes, UInt64, UInt64, UInt64]:
-    off = _row_offset(index)
-    raw = op.Box.extract(Bytes(FORKS_BOX_NAME), off, UInt64(FORK_ROW_BYTES))
+    raw, exists = op.AppGlobal.get_ex_bytes(0, _row_key(index))
+    assert exists, "fork row missing"
+    assert raw.length == UInt64(FORK_ROW_BYTES), "fork row wrong length"
     activation_epoch = op.btoi(raw[0:8])
     fork_version = raw[8:12]
     finality_gindex = op.btoi(raw[12:20])
@@ -76,7 +85,6 @@ def append_fork_row(
         prev_epoch, _pv, _pf, _pc, _pn = _read_row(fork_count - 1)
         assert activation_epoch > prev_epoch, "activation_epoch must strictly increase"
 
-    off = _row_offset(fork_count)
     row = (
         op.itob(activation_epoch)
         + fork_version
@@ -84,7 +92,7 @@ def append_fork_row(
         + op.itob(current_sc_gindex)
         + op.itob(next_sc_gindex)
     )
-    op.Box.replace(Bytes(FORKS_BOX_NAME), off, row)
+    op.AppGlobal.put(_row_key(fork_count), row)
     return fork_count + UInt64(1)
 
 

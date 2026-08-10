@@ -5,14 +5,19 @@ This is the test that originally surfaced the bugs this fix addresses: a
 single-call `install_open_boxes` (9 box references: 8 key boxes + 1 session
 box) exceeds Algorand's real per-transaction box-reference cap, confirmed
 via a direct protocol error during live testing -- and, found while building
-THIS test, `bootstrap` independently hit the same cap a second way (it reads
-the `forks` box for its gindex lookup in the same call that used to create
-the 8 key boxes). §16 measured the exact constraints and split box-opening
-into three phases -- `bootstrap`/`install_begin` (validate + reserve,
+THIS test, `bootstrap` independently hit the same cap a second way: AT THE
+TIME, it read the `forks` box for its gindex lookup in the same call that
+used to create the 8 key boxes, a second, independent way to exceed the
+cap. §16 measured the exact constraints and split box-opening into three
+phases -- `bootstrap`/`install_begin` (validate + reserve,
 `INST_STATE_VALIDATED`) -> `install_open_keys` (`INST_STATE_OPENING_BOXES`)
 -> `install_open_session` (`INST_STATE_INSTALLING`) -- submitted as sibling
 transactions in one atomic group, padded with `noop_budget()` calls
-carrying the extra box references the pooled write-budget needs.
+carrying the extra box references the pooled write-budget needs. (013
+moved the fork table into global state, so `bootstrap`'s gindex lookup no
+longer touches a box at all -- but the three-phase split this file tests
+stands regardless, since it was ALSO fixing the independent 9-refs-in-
+one-call `install_open_boxes` problem, untouched by 013.)
 
 This file proves that fix actually works against a real network:
 
@@ -178,17 +183,22 @@ def validated_only_session(algod_available):
 
     h = SyncCommitteeLiveHarness()
     h.create(h.sender, b"\x00" * 32)
-    h.submit([("append_fork_row", [0, b"\x01\x00\x00\x00", FINALITY_GINDEX, CURRENT_SYNC_COMMITTEE_GINDEX, NEXT_SYNC_COMMITTEE_GINDEX], [(0, b"forks")])])
+    # 013 §0/§5.4: create() no longer pre-funds the app account -- fund it
+    # here, as an ordinary post-create payment, for the box-creating calls
+    # below (M4's k:/s:/a: box families are untouched by 013).
+    h.fund_app()
+    h.submit([("append_fork_row", [0, b"\x01\x00\x00\x00", FINALITY_GINDEX, CURRENT_SYNC_COMMITTEE_GINDEX, NEXT_SYNC_COMMITTEE_GINDEX])])
     fx = _build_bootstrap_fixture()
     # `noop_budget()` sibling call pools +700 opcode budget (§9.4) -- bootstrap
-    # alone (hash_tree_root + forks lookup + a depth-5 merkle branch check)
-    # exceeds a bare transaction's 700, confirmed empirically here.
+    # alone (hash_tree_root + forks-row lookup + a depth-5 merkle branch check)
+    # exceeds a bare transaction's 700, confirmed empirically here. 013 §3:
+    # the forks-row lookup is now a global-state read, so `bootstrap` needs
+    # no box references of its own any more.
     h.submit(
         [
             (
                 "bootstrap",
                 [fx["header"], fx["committee_root"], fx["branch"], fx["trusted_block_root"]],
-                [(0, b"forks")],
             ),
             ("noop_budget", []),
         ]
@@ -231,13 +241,16 @@ def bootstrapped_session(m4_live_harness):
     both tests in this file can build on the same committed session."""
     h = m4_live_harness
     h.create(h.sender, b"\x00" * 32)
+    # 013 §0/§5.4: create() no longer pre-funds the app account -- fund it
+    # here instead, as an ordinary post-create payment (no prediction, no
+    # race: `h.app_id` is already a real, confirmed id).
+    h.fund_app()
 
     h.submit(
         [
             (
                 "append_fork_row",
                 [0, b"\x01\x00\x00\x00", FINALITY_GINDEX, CURRENT_SYNC_COMMITTEE_GINDEX, NEXT_SYNC_COMMITTEE_GINDEX],
-                [(0, b"forks")],
             ),
         ]
     )
@@ -250,23 +263,25 @@ def bootstrapped_session(m4_live_harness):
     # §16: the exact split that fixes both bugs -- 4 sibling transactions in
     # ONE atomic group.
     #   1. bootstrap(): validates + reserves gen (INST_STATE_VALIDATED).
-    #      Touches only the "forks" box (its gindex lookup) -- no key/session
-    #      box refs at all, which is exactly what fixes bootstrap's OWN
-    #      independent 9-refs hit (forks + 8 key-box creates used to be one
-    #      call). Carries 7 padding refs alongside "forks" (8 total).
+    #      013 §3/§6.4: its forks-row lookup is a global-state read now, so
+    #      it touches NO box references of its own -- the 8 references
+    #      below are pure padding toward the group's pooled write budget,
+    #      REPLACING (not deleting) the slot the `forks` box reference used
+    #      to occupy here (013 §6.4/§17 item 7: dropping to 7 would
+    #      silently under-budget the group by one reference).
     #   2. install_open_keys(): creates k:<gen>:0..7 -- exactly 8 real refs,
     #      the measured per-txn cap, no room for padding.
     #   3. install_open_session(): creates s:<gen> -- 1 real ref + 7 padding.
     #   4. noop_budget(): 1 more padding ref.
     # Total group refs: 8 + 8 + 8 + 1 = 25, matching
     # MIN_BOX_REFS_FOR_INSTALL_OPEN (pool = 25*2048 = 51,200 B >=
-    # the 49,576 B actually written).
+    # the 49,576 B actually written) -- unchanged by 013 (measured, §6.4).
     result = h.submit(
         [
             (
                 "bootstrap",
                 [fx["header"], fx["committee_root"], fx["branch"], fx["trusted_block_root"]],
-                [(0, b"forks")] + key_refs[:7],
+                key_refs[:8],
             ),
             ("install_open_keys", [], key_refs),
             ("install_open_session", [], session_ref + key_refs[:7]),

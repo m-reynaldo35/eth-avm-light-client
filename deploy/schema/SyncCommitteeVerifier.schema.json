@@ -1,19 +1,6 @@
 {
   "boxes": [
     {
-      "count": 1,
-      "created_by": "create",
-      "deleted_by": null,
-      "family": "fork_table",
-      "lifetime": "permanent -- no deleter exists (\u00a710.4)",
-      "mbr_microalgo": 234900,
-      "name": {
-        "literal": "forks",
-        "name_bytes": 5
-      },
-      "value_bytes": 576
-    },
-    {
       "count": "8 per generation (64 keys/box)",
       "created_by": "install_open_keys",
       "deleted_by": "install_abort, retire",
@@ -58,28 +45,23 @@
   ],
   "contract": "SyncCommitteeVerifier",
   "deploy": {
-    "create_creates_boxes": [
-      "forks"
-    ],
+    "create_creates_boxes": [],
     "create_signature": "create(address,byte[32])void",
     "init_calls": [
       {
         "append_only": true,
-        "boxes": [
-          "forks"
-        ],
         "cursor": "global:fork_count",
         "method": "append_fork_row",
         "repeat": "len(fork_rows)"
       }
     ],
-    "mbr_at_create_microalgo": 334900,
+    "mbr_at_create_microalgo": 100000,
     "min_box_refs_for_install_open": 25,
     "ordering": []
   },
   "design_doc": "docs/design/004-sync-committee.md",
   "global_state": {
-    "creator_mbr_microalgo": 820500,
+    "creator_mbr_microalgo": 1620500,
     "keys": [
       {
         "key": "gov",
@@ -162,8 +144,25 @@
         "type": "uint64"
       }
     ],
+    "row_family": {
+      "capacity": 16,
+      "deleted_by": null,
+      "family": "fork_table",
+      "key": {
+        "index_encoding": "itob(index)[7:8]",
+        "key_bytes": 2,
+        "prefix": "f"
+      },
+      "lifetime": "permanent -- no deleter exists (010 \u00a710.4)",
+      "mbr_microalgo_per_slot": 50000,
+      "mbr_microalgo_total": 800000,
+      "reserved_by": "StateTotals(global_bytes=7 + FORK_TABLE_CAPACITY)",
+      "slots_reserved": 16,
+      "value_bytes": 36,
+      "written_by": "append_fork_row"
+    },
     "schema": {
-      "bytes": 7,
+      "bytes": 23,
       "ints": 13
     }
   },
@@ -172,8 +171,8 @@
     "genesis_validators_root is write-once at create, no setter"
   ],
   "program": {
-    "approval_bytes": 6980,
-    "approval_sha256": "7a937250bbff32a2269b6773de508456e05c677c5f89810c16ce70d2bbe2f152",
+    "approval_bytes": 6977,
+    "approval_sha256": "51f4253a102cf01a1b263711743c8ec3af5187da6e99eb87a2394254688b86bf",
     "avm_version": 10,
     "clear_bytes": 4,
     "clear_sha256": "d17be8c9ad6dedb5b4394a8fdc00273a4deb4725415ff8ce151a12544b4a280a",

@@ -126,7 +126,12 @@ def cmd_inspect(args):
         print(json.dumps({"app_id": app_id, "fork_rows": decoded}, indent=2, sort_keys=True))
         return 0
 
-    gs = inspect_mod.decode_global_state(algod_client, app_id)
+    # §17 item 8 / §15.2 item 6: the default dump is human-facing, so
+    # fork-row-family binary keys (2 raw bytes, invisible/unnamed) are
+    # filtered out here -- they remain reachable via `--forks`.
+    gs_raw = inspect_mod.decode_global_state_raw(algod_client, app_id)
+    gs_raw = inspect_mod.filter_named_keys_raw(gs_raw)
+    gs = {k.decode("utf-8", errors="replace"): v for k, v in gs_raw.items()}
     bal = inspect_mod.account_balance(algod_client, app_id)
     out = {"app_id": app_id, "global_state": {k: (v.hex() if isinstance(v, bytes) else v) for k, v in gs.items()},
            "balance": bal}

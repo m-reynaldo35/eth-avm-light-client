@@ -43,9 +43,9 @@
       "source": "contracts/mpt/bench_app.py"
     },
     "SyncCommitteeVerifier": {
-      "approval_bytes": 6980,
-      "bytecode_cap_headroom_bytes": 1212,
-      "code_id": "7a937250bbff32a2269b6773de508456e05c677c5f89810c16ce70d2bbe2f152",
+      "approval_bytes": 6977,
+      "bytecode_cap_headroom_bytes": 1215,
+      "code_id": "51f4253a102cf01a1b263711743c8ec3af5187da6e99eb87a2394254688b86bf",
       "code_window": {
         "reason": "004 \u00a74.5 normative: the Gloas row MUST NOT be appended until its gindices are confirmed against vendored Gloas vectors; 003 \u00a72.6 measures a depth-11 branch at 738 > the 700 single-call limit, so group sizing must change too.",
         "supported": [
@@ -63,8 +63,8 @@
       "source": "contracts/sync_committee/verifier.py"
     },
     "TrustedRootAnchor": {
-      "approval_bytes": 3027,
-      "code_id": "9b790b33f2116a5ccbbe07ce2d9ac040c8c1897c695ca2725b7d99956522d57d",
+      "approval_bytes": 3023,
+      "code_id": "c3f55af8ddbec90796d300b42ab5ccd1a860643a1ac69b9ded471d0a19356cd1",
       "code_window": {
         "reason": "008 NG3 / \u00a710.5: a depth-11 EL branch pushes HISTORICAL's argument payload over the 2,048 B cap. O-M8-4, not approved.",
         "supported": [

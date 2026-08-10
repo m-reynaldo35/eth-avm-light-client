@@ -79,12 +79,16 @@ boundary, and it is per-contract — which is why the two contracts carry
 *different* code windows below, and why a single project-wide "supported
 forks" list would be a lie.
 
-## The standing budget: `SyncCommitteeVerifier`'s 1,212-byte headroom
+## The standing budget: `SyncCommitteeVerifier`'s 1,215-byte headroom
 
-`SyncCommitteeVerifier` compiles to **6,980 bytes — 85.2% of the 8,192 B
-per-application bytecode cap**, leaving **1,212 bytes** of headroom. A
-future fork that requires an M4 *code* change (not just a table row) has
-1,212 bytes to fit in. If it does not fit, the change cascades into M8
+`SyncCommitteeVerifier` compiles to **6,977 bytes — 85.2% of the 8,192 B
+per-application bytecode cap**, leaving **1,215 bytes** of headroom
+([013](design/013-fork-table-global-state.md) §3.6: the fork-table storage
+revision made the compiled program 3 bytes SMALLER — a box access emits
+more code than `app_global_get_ex` with a 2-byte key — so headroom grew by
+3 bytes, from 1,212). A future fork that requires an M4 *code* change (not
+just a table row) has 1,215 bytes to fit in. If it does not fit, the change
+cascades into M8
 (whose `m4_app_id` is write-once) and from there into every M8 consumer,
 whose `ANCHOR_APP_ID` is a compiled-in immediate (`consumers_bound_at_compile_time`
 in `deploy/versions.json`). This number is generated fresh into
@@ -117,7 +121,7 @@ why a version and a verification can never disagree.
   "avm": {"version": 10, "measured_against": "go-algorand 4.7.4 (91cbddcd, rel/stable)"},
   "contracts": {
     "TrustedRootAnchor": {
-      "code_id": "9b790b33f2116a5ccbbe07ce2d9ac040c8c1897c695ca2725b7d99956522d57d",
+      "code_id": "c3f55af8ddbec90796d300b42ab5ccd1a860643a1ac69b9ded471d0a19356cd1",
       "fork_axis": "table",
       "code_window": {"supported": ["deneb","electra","fulu"], "unsupported": ["gloas"], "reason": "..."},
       "consumers_bound_at_compile_time": true,

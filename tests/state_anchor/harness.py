@@ -56,16 +56,16 @@ class Arc4Harness:
         """M8-specific convenience: `TrustedRootAnchor`'s ring/pin box
         names are a pure function of `block_number` (and the immutable
         `ring_n`), so tests do not have to hand-compute
-        `h:<residue>`/`p:<block>`/`forks8` box references at every call
-        site -- this mirrors what a real ARC-56-aware client library would
-        derive automatically."""
+        `h:<residue>`/`p:<block>` box references at every call site -- this
+        mirrors what a real ARC-56-aware client library would derive
+        automatically. 013 §6.4: `anchor_direct`/`anchor_historical` no
+        longer add a `forks8` reference -- the fork table moved to global
+        state, which costs no box-reference budget at all."""
         if self.ring_n is None or method_name not in self.methods:
             return None
         m = self.methods[method_name]
         arg_names = [a["name"] for a in m.get("args", [])]
         boxes = []
-        if method_name in ("anchor_direct", "anchor_historical"):
-            boxes.append((0, b"forks8"))
         bn_name = "block_number" if "block_number" in arg_names else (
             "el_block_number" if "el_block_number" in arg_names else None
         )
@@ -79,10 +79,17 @@ class Arc4Harness:
         return boxes or None
 
     def create(self, method_args: list, *, boxes=None, extra_pages: int = 0, fund_app: int = 0) -> int:
-        """`fund_app` (µALGO): if nonzero, predicts the about-to-be-created
-        app's address (probe-fund-create) -- box MBR is charged to the APP
-        account, which needs funds before `create()` executes, but an
-        app's address is only knowable once its id is."""
+        """013 §0/§3/§5.4: `create()` creates no box at all any more (the
+        fork table -- the only box `create()` ever created -- moved to
+        global state, whose MBR the CREATOR pays at create time), so this
+        is now a single, ordinary, unfunded `add_method_call(app_id=0,
+        ...)` -- no probe-fund-create dance, no id prediction, no race, no
+        retry loop.
+
+        `fund_app` (µALGO) stays as a parameter (M8 still needs app-account
+        funds for its `ring`/`pin` box families, untouched by 013) but is
+        now a plain POST-create payment to the app's own, already-known,
+        already-confirmed address -- there is nothing left to predict."""
         from algosdk import logic, transaction
         from algosdk.abi import Method
         from algosdk.atomic_transaction_composer import (
@@ -90,57 +97,34 @@ class Arc4Harness:
             AtomicTransactionComposer,
         )
 
-        last_error = None
-        attempts = 5 if fund_app else 1
-        for _attempt in range(attempts):
-            if fund_app:
-                probe_teal = "#pragma version 10\nint 1\nreturn\n"
-                probe_compiled = compile_teal(self.algod, probe_teal)
-                sp0 = self.algod.suggested_params()
-                probe_txn = transaction.ApplicationCreateTxn(
-                    sender=self.sender, sp=sp0, on_complete=transaction.OnComplete.NoOpOC,
-                    approval_program=probe_compiled, clear_program=probe_compiled,
-                    global_schema=transaction.StateSchema(0, 0), local_schema=transaction.StateSchema(0, 0),
-                )
-                probe_stxn = probe_txn.sign(self.sk)
-                probe_txid = self.algod.send_transaction(probe_stxn)
-                probe_confirmed = transaction.wait_for_confirmation(self.algod, probe_txid, 4)
-                predicted_id = probe_confirmed["application-index"] + 2
-                predicted_address = logic.get_application_address(predicted_id)
-                sp1 = self.algod.suggested_params()
-                fund_txn = transaction.PaymentTxn(self.sender, sp1, predicted_address, fund_app)
-                fund_stxn = fund_txn.sign(self.sk)
-                fund_txid = self.algod.send_transaction(fund_stxn)
-                transaction.wait_for_confirmation(self.algod, fund_txid, 4)
+        atc = AtomicTransactionComposer()
+        signer = AccountTransactionSigner(self.sk)
+        method = Method.undictify(self.methods["create"])
+        sp = self.algod.suggested_params()
+        sp.flat_fee = True
+        sp.fee = 1000
+        kwargs = {}
+        if boxes:
+            kwargs["boxes"] = boxes
+        atc.add_method_call(
+            app_id=0, method=method, sender=self.sender, sp=sp, signer=signer,
+            method_args=method_args, on_complete=transaction.OnComplete.NoOpOC,
+            approval_program=self.approval_compiled, clear_program=self.clear_compiled,
+            global_schema=transaction.StateSchema(self.global_schema_ints, self.global_schema_bytes),
+            local_schema=transaction.StateSchema(0, 0), extra_pages=extra_pages, **kwargs,
+        )
+        result = atc.execute(self.algod, 4)
+        confirmed = self.algod.pending_transaction_info(result.tx_ids[0])
+        self.app_id = confirmed["application-index"]
 
-            atc = AtomicTransactionComposer()
-            signer = AccountTransactionSigner(self.sk)
-            method = Method.undictify(self.methods["create"])
-            sp = self.algod.suggested_params()
-            sp.flat_fee = True
-            sp.fee = 1000
-            kwargs = {}
-            if boxes:
-                kwargs["boxes"] = boxes
-            atc.add_method_call(
-                app_id=0, method=method, sender=self.sender, sp=sp, signer=signer,
-                method_args=method_args, on_complete=transaction.OnComplete.NoOpOC,
-                approval_program=self.approval_compiled, clear_program=self.clear_compiled,
-                global_schema=transaction.StateSchema(self.global_schema_ints, self.global_schema_bytes),
-                local_schema=transaction.StateSchema(0, 0), extra_pages=extra_pages, **kwargs,
-            )
-            try:
-                result = atc.execute(self.algod, 4)
-            except Exception as exc:  # noqa: BLE001 -- raced funding target, retry
-                last_error = exc
-                continue
-            confirmed = self.algod.pending_transaction_info(result.tx_ids[0])
-            self.app_id = confirmed["application-index"]
-            if fund_app and self.app_id != predicted_id:
-                last_error = AssertionError(f"app id prediction raced: predicted {predicted_id}, got {self.app_id}")
-                continue
-            return self.app_id
-        raise RuntimeError(f"create() failed after retries, last error: {last_error}")
+        if fund_app:
+            address = logic.get_application_address(self.app_id)
+            sp1 = self.algod.suggested_params()
+            fund_txn = transaction.PaymentTxn(self.sender, sp1, address, fund_app)
+            fund_txid = self.algod.send_transaction(fund_txn.sign(self.sk))
+            transaction.wait_for_confirmation(self.algod, fund_txid, 4)
+
+        return self.app_id
 
     def _build_atc(self, calls: list, default_boxes=None, default_apps=None, fee=1000):
         from algosdk.abi import Method

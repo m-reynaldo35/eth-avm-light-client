@@ -45,14 +45,13 @@ def anchor(compiled, account, m4probe):
     anchor_contracts, _bench = compiled
     sender, sk = account
     h = Arc4Harness(anchor_contracts["TrustedRootAnchor"], sender, sk)
-    h.create([sender, m4probe.app_id, RING_N], extra_pages=1, boxes=[(0, b"forks8")], fund_app=15_000_000)
+    h.create([sender, m4probe.app_id, RING_N], extra_pages=1, fund_app=15_000_000)
     h.ring_n = RING_N
     ring_boxes = [(0, b"h:" + i.to_bytes(8, "big")) for i in range(RING_N)]
     h.submit([{"method": "ring_init_chunk", "args": [RING_N], "boxes": ring_boxes}])
     h.submit([{
         "method": "append_fork_row",
         "args": [0, synth.G_STATE_ROOT, synth.G_RECEIPTS_ROOT, synth.G_BLOCK_NUMBER, synth.G_BLOCK_ROOTS_BASE],
-        "boxes": [(0, b"forks8")],
     }])
     return h
 
@@ -230,7 +229,7 @@ class TestRingNImmutable:
         sender, sk = account
         h = Arc4Harness(anchor_contracts["TrustedRootAnchor"], sender, sk)
         with pytest.raises(Exception):
-            h.create([sender, m4probe.app_id, 7], extra_pages=1, boxes=[(0, b"forks8")], fund_app=15_000_000)  # not a power of two
+            h.create([sender, m4probe.app_id, 7], extra_pages=1, fund_app=15_000_000)  # not a power of two
 
 
 class TestSecurityErrorCodes:

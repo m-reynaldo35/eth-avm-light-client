@@ -47,7 +47,7 @@ module advances finalized state only on the mainline rule, strict
 
 import typing
 
-from algopy import ARC4Contract, Bytes, Txn, UInt64, arc4, op, subroutine
+from algopy import ARC4Contract, Bytes, StateTotals, Txn, UInt64, arc4, op, subroutine
 
 from contracts.primitives.bls.hash_to_curve import hash_to_g2
 from contracts.primitives.bls.pairing import verify_aggregate_signature
@@ -127,7 +127,11 @@ class LightClientUpdateVerified(arc4.Struct):
     signature_slot: arc4.UInt64
 
 
-class SyncCommitteeVerifier(ARC4Contract, avm_version=10):
+class SyncCommitteeVerifier(
+    ARC4Contract,
+    avm_version=10,
+    state_totals=StateTotals(global_uints=13, global_bytes=7 + forks.FORK_TABLE_CAPACITY),
+):
     # ---- one-time setup --------------------------------------------------
 
     @arc4.abimethod(create="require")
@@ -158,7 +162,6 @@ class SyncCommitteeVerifier(ARC4Contract, avm_version=10):
 
         self.fork_count = UInt64(0)
         self.gen_counter = UInt64(0)
-        forks.forks_box_create()
 
     @arc4.abimethod
     def append_fork_row(

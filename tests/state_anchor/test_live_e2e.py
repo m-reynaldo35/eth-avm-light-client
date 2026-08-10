@@ -61,7 +61,7 @@ class TestG5M8RealRingInit:
         h = Arc4Harness(compiled_anchor["TrustedRootAnchor"], sender, sk)
         # m4_app_id is irrelevant to ring-init; use 1 (never dereferenced
         # until an anchor_* call touches it).
-        h.create([sender, 1, 128], extra_pages=1, boxes=[(0, b"forks8")], fund_app=140_000_000)
+        h.create([sender, 1, 128], extra_pages=1, fund_app=140_000_000)
 
         from algosdk.abi import Method
         from algosdk.atomic_transaction_composer import AccountTransactionSigner, AtomicTransactionComposer
@@ -135,7 +135,7 @@ class TestG1M8RealDirectAnchor:
         el_block_number = int(payload["block_number"])
 
         anchor = Arc4Harness(compiled_anchor["TrustedRootAnchor"], sender, sk)
-        anchor.create([sender, h.app_id, RING_N], extra_pages=1, boxes=[(0, b"forks8")], fund_app=15_000_000)
+        anchor.create([sender, h.app_id, RING_N], extra_pages=1, fund_app=15_000_000)
         anchor.ring_n = RING_N
         anchor.submit([{
             "method": "ring_init_chunk", "args": [RING_N],
@@ -144,7 +144,6 @@ class TestG1M8RealDirectAnchor:
         anchor.submit([{
             "method": "append_fork_row",
             "args": [0, g_state, g_receipts, g_number, G_BLOCK_ROOTS_BASE_PLACEHOLDER],
-            "boxes": [(0, b"forks8")],
         }])
 
         callee_id, issuer_id = donors

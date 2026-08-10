@@ -440,6 +440,14 @@ file covers the *storage* surface, which ARC-56 does not describe at all.
 
 ## 4. The real schemas — measured
 
+> **Superseded by [013 §3/§4](013-fork-table-global-state.md):** both
+> contracts' fork table moved from box storage to global state. §4.1's
+> `fork table` box row and §4.2's `forks8` box row no longer exist as
+> boxes — the numbers below (820,500/406,500 creator MBR, 334,900 M4
+> app-account min-balance, etc.) are the PRE-013 figures. See 013 §4 for
+> the current numbers (1,620,500/806,500 creator MBR; 100,000 app-account
+> base for both). Left as originally written, per this project's convention.
+
 Everything in this section is read from the shipped code and, where marked,
 confirmed against a real deployed app on the dev network.
 
@@ -611,6 +619,13 @@ concrete.
 
 ### 5.2 M4 — `SyncCommitteeVerifier`
 
+> **Superseded by [013 §5.1](013-fork-table-global-state.md#51-deployplansm4py-and-deployplansm8py):**
+> `create()` no longer creates a box or needs stage-1 pre-funding at all —
+> steps 2's "predict + fund" and the `boxes=[(0, b"forks")]` references
+> below are gone; the schema is read from the compiled ARC-56, not a
+> literal `(13,7)`. Left as originally written, per this project's
+> convention.
+
 ```
 1.  compile          puyapy → TEAL → algod /v2/teal/compile   (6,980 B, extra_pages=3)
 2.  predict + fund   §7.1's two-stage recipe, stage 1: 334,900 µALGO
@@ -632,6 +647,13 @@ row the other contract will reject or, worse, silently mis-parse; §5.5's
 generator emits both from one source and the schema artifact declares both.
 
 ### 5.3 M8 — `TrustedRootAnchor`
+
+> **Superseded by [013 §5.1](013-fork-table-global-state.md#51-deployplansm4py-and-deployplansm8py):**
+> `create()` no longer creates a box or needs stage-1 pre-funding at all —
+> step 3's "predict + fund" and the `boxes=[(0, b"forks8")]` reference
+> below are gone; the schema is read from the compiled ARC-56, not a
+> literal `(9,1)`. Left as originally written, per this project's
+> convention.
 
 ```
 1.  compile          3,027 B, extra_pages=1

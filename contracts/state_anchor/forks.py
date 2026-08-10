@@ -10,7 +10,10 @@ Gindices are never read from calldata (N-FORK, §3.4; §15 item 18) -- this
 table, populated only through `append_fork_row`'s governance-gated,
 monotonic-epoch checks, is the ONLY source `bridge.py` may use.
 
-Row shape (§3.3), 40 bytes, stored in box `forks8`, append-only:
+Row shape (§3.3), 40 bytes, stored in GLOBAL STATE keyed by
+`FORK_ROW_KEY_PREFIX + itob(index)[7:8]` (docs/design/013 §3.1/§3.3 -- moved
+off box storage so create()'s MBR is charged to the creator, not the app's
+own not-yet-existent account), append-only:
     activation_epoch:   uint64 (8B, big-endian box-internal encoding --
                                  NOT an SSZ chunk, no endianness trap here)
     g_state_root:        uint64 (8B)
@@ -32,27 +35,22 @@ from algopy import Bytes, UInt64, subroutine, urange, op
 
 from contracts.state_anchor.constants import (
     FORK_ROW_BYTES,
+    FORK_ROW_KEY_PREFIX,
     FORK_TABLE_CAPACITY,
-    FORKS_BOX_BYTES,
-    FORKS_BOX_NAME,
     UINT64_MAX,
 )
 
 
 @subroutine
-def forks_box_create() -> None:
-    _created = op.Box.create(Bytes(FORKS_BOX_NAME), UInt64(FORKS_BOX_BYTES))
-
-
-@subroutine
-def _row_offset(index: UInt64) -> UInt64:
-    return index * UInt64(FORK_ROW_BYTES)
+def _row_key(index: UInt64) -> Bytes:
+    return Bytes(FORK_ROW_KEY_PREFIX) + op.itob(index)[7:8]
 
 
 @subroutine
 def _read_row(index: UInt64) -> tuple[UInt64, UInt64, UInt64, UInt64, UInt64]:
-    off = _row_offset(index)
-    raw = op.Box.extract(Bytes(FORKS_BOX_NAME), off, UInt64(FORK_ROW_BYTES))
+    raw, exists = op.AppGlobal.get_ex_bytes(0, _row_key(index))
+    assert exists, "fork row missing"
+    assert raw.length == UInt64(FORK_ROW_BYTES), "fork row wrong length"
     activation_epoch = op.btoi(raw[0:8])
     g_state_root = op.btoi(raw[8:16])
     g_receipts_root = op.btoi(raw[16:24])
@@ -92,7 +90,6 @@ def append_fork_row(
         prev_epoch, _s, _r, _n, _b = _read_row(fork_count - 1)
         assert activation_epoch > prev_epoch, "activation_epoch must strictly increase"
 
-    off = _row_offset(fork_count)
     row = (
         op.itob(activation_epoch)
         + op.itob(g_state_root)
@@ -100,7 +97,7 @@ def append_fork_row(
         + op.itob(g_block_number)
         + op.itob(g_block_roots_base)
     )
-    op.Box.replace(Bytes(FORKS_BOX_NAME), off, row)
+    op.AppGlobal.put(_row_key(fork_count), row)
     return fork_count + UInt64(1)
 
 
