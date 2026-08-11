@@ -32,3 +32,7 @@ tests/state_anchor/.cache/
 # it is the durable record of what was deployed); anything suffixed
 # `.local.json` is a throwaway individual devnet run and is not.
 deploy/manifests/*.local.json
+
+# Claude Code local session state (worktrees, etc.) -- machine/session-
+# specific, never portable, never meant to be committed.
+.claude/

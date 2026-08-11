@@ -86,7 +86,7 @@ def test_f1_uncovered_error_codes_match_committed_baseline():
         f"  newly covered (remove from baseline): {sorted(committed - fresh)}\n"
         f"  newly uncovered (add to baseline, reviewably): {sorted(fresh - committed)}"
     )
-    assert len(committed) == 13
+    assert len(committed) == 2
 
 
 # ---------------------------------------------------------------------------

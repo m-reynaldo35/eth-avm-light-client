@@ -297,6 +297,118 @@ class TestSecurityErrorCodes:
         revoked = anchor.call("attest", [105])
         assert not revoked.ok and "assert failed" in revoked.failure
 
+    def test_N7_fin_state_root_cross_check_mismatch_rejected(self, anchor, m4probe):
+        """§4.4 step 4: `fin_header`'s own `state_root` field is already
+        bound by `assert_fin_header_matches`'s htr check (so `N6` passes --
+        `fin_root` genuinely IS `hash_tree_root(fin_header)`), but M4's
+        SEPARATELY-read `fin_state_root` global must independently agree
+        with it. Set `M4Probe.fin_state_root` to a value that disagrees
+        with the real header's own embedded field -- the relayer-supplied-
+        header-from-the-wrong-M4-epoch case `N7` exists to name."""
+        args, fin_root, fin_state_root, _s, _r = _direct_anchor_args(m4probe.app_id, block_number=106)
+        wrong_fin_state_root = synth.random32()
+        assert wrong_fin_state_root != fin_state_root
+        _set_m4(m4probe, FIN_SLOT, fin_root, wrong_fin_state_root)
+        res = anchor.call("anchor_direct", args, apps=[m4probe.app_id])
+        assert not res.ok
+        assert "assert failed" in res.failure
+
+    def test_N8_malformed_header_arg_length_rejected(self, anchor, m4probe, account):
+        """`bridge.assert_header_shape`: `fin_header` must be exactly 112
+        bytes. A conforming ARC-4 client (algosdk's own `StaticArray`
+        encoder) refuses client-side to encode anything but exactly 112
+        bytes for this argument, so this can ONLY be reached via a raw,
+        hand-crafted app-call argument that bypasses the ABI encoder
+        entirely -- exactly what `N8` exists to catch ahead of an obscure
+        `extract`-range failure four steps later (bridge.py's own
+        docstring). Built by ABI-encoding a genuinely honest
+        `anchor_direct` call via a real ATC (so every OTHER argument is
+        correctly shaped), then truncating JUST the already-encoded header
+        app-arg to 100 bytes before signing. A single, ungrouped call, so
+        there is no stale group-id hash to invalidate (empirically
+        confirmed: ATC leaves `.group` unset for a lone method call)."""
+        from algosdk.abi import Method
+        from algosdk.atomic_transaction_composer import AccountTransactionSigner, AtomicTransactionComposer
+        from algosdk.v2client.models import SimulateRequest, SimulateRequestTransactionGroup
+
+        sender, sk = account
+        args, fin_root, fin_state_root, _s, _r = _direct_anchor_args(m4probe.app_id, block_number=107)
+        _set_m4(m4probe, FIN_SLOT, fin_root, fin_state_root)
+
+        algod = anchor.algod
+        atc = AtomicTransactionComposer()
+        signer = AccountTransactionSigner(sk)
+        sp = algod.suggested_params()
+        sp.flat_fee = True
+        sp.fee = 1000
+        atc.add_method_call(
+            app_id=anchor.app_id, method=Method.undictify(anchor.methods["anchor_direct"]),
+            sender=sender, sp=sp, signer=signer, method_args=args,
+            foreign_apps=[m4probe.app_id],
+        )
+        group = atc.build_group()
+        txn = group[0].txn
+        assert txn.group is None, "a lone method call must not carry a stale group id"
+        header_idx = next(i for i, a in enumerate(txn.app_args) if len(a) == 112)
+        txn.app_args[header_idx] = txn.app_args[header_idx][:100]  # 112 -> 100 bytes
+        stxn = txn.sign(sk)
+
+        sreq = SimulateRequest(
+            txn_groups=[SimulateRequestTransactionGroup(txns=[stxn])], allow_unnamed_resources=True,
+        )
+        resp = algod.simulate_transactions(sreq)
+        grp = resp["txn-groups"][0]
+        assert grp.get("failure-message"), "a header arg of the wrong byte length must be rejected"
+        assert "assert failed" in grp["failure-message"]
+
+    def test_N16_historical_window_t_slot_not_before_fin_slot_rejected(self, anchor, m4probe):
+        """§4.2 N-WINDOW: HISTORICAL mode requires `t_slot < fin_slot`. A
+        real, valid `fin_header`/`fin_root`/`fin_state_root` triple (N5/N6/
+        N7 all pass) paired with a `target_header` whose OWN slot is AFTER
+        `fin_slot` -- the shape check (still 112 bytes) passes, and the
+        target header's hash is never checked against a pre-known value in
+        HISTORICAL mode (only folded later against `block_roots`, which
+        this call never reaches), so `N16` is the first and only check that
+        can fire."""
+        state_root = synth.random32()
+        receipts_root = synth.random32()
+        body_root, _sb, _rb, _nb = synth.build_execution_tree(state_root, receipts_root, 0)
+        fin_header, fin_root = synth.make_header(FIN_SLOT, 0, synth.random32(), synth.random32(), body_root)
+        fin_state_root = fin_header[48:80]
+        _set_m4(m4probe, FIN_SLOT, fin_root, fin_state_root)
+
+        bad_t_slot = FIN_SLOT + 5  # violates t_slot < fin_slot
+        target_header, _t_root = synth.make_header(
+            bad_t_slot, 0, synth.random32(), synth.random32(), synth.random32()
+        )
+
+        args = [
+            m4probe.app_id, fin_header, target_header, b"",
+            b"\x00" * 32, b"\x00" * 32, 0, b"", b"", b"",
+        ]
+        res = anchor.call("anchor_historical", args, apps=[m4probe.app_id])
+        assert not res.ok
+        assert "assert failed" in res.failure
+
+    def test_N17_no_fork_row_for_epoch_rejected(self, compiled, account, m4probe):
+        """`forks.lookup_row`: `N17` when the table has no row with
+        `activation_epoch <= epoch(fin_slot)` -- here, no row at all
+        (`append_fork_row` never called). A real, valid `fin_header`/
+        `fin_root`/`fin_state_root` (N5/N6/N7 all pass) proves this is
+        genuinely the fork-lookup failing, not an earlier check."""
+        anchor_contracts, _bench = compiled
+        sender, sk = account
+        h = Arc4Harness(anchor_contracts["TrustedRootAnchor"], sender, sk)
+        h.create([sender, m4probe.app_id, RING_N], extra_pages=1, fund_app=15_000_000)
+        h.ring_n = RING_N
+        # deliberately: no ring_init_chunk, no append_fork_row
+
+        args, fin_root, fin_state_root, _s, _r = _direct_anchor_args(m4probe.app_id, block_number=108)
+        _set_m4(m4probe, FIN_SLOT, fin_root, fin_state_root)
+        res = h.call("anchor_direct", args, apps=[m4probe.app_id])
+        assert not res.ok
+        assert "assert failed" in res.failure
+
 
 class TestRetentionRing:
     def test_idempotent_reanchor_is_a_noop_success(self, anchor, m4probe, donors):
@@ -377,3 +489,338 @@ class TestPinnedTier:
         assert result.tx_ids
 
         anchor.submit([{"method": "unpin", "args": [300], "boxes": [_pin_box(300)], "fee": 2000}])
+
+
+class TestRingLifecycleErrorCodes:
+    def test_N10_anchor_before_ring_initialised_rejected(self, compiled, account, m4probe, donors):
+        """`box.finish_anchor_flow`'s FIRST check: `ring_cursor == ring_n`
+        (§7.4/§12.1's "ring not initialised" case). A fork row IS appended
+        (so `forks.lookup_row`, checked earlier in the call, succeeds --
+        proving N10, not N17, is what fires) but `ring_init_chunk` is never
+        called, so `ring_cursor` stays 0 while `ring_n == 8`. The full,
+        real 3-way Merkle fold must still succeed honestly to even REACH
+        `finish_anchor_flow`, hence the donor-funded budget (mirrors the
+        happy-path test's own real cost)."""
+        anchor_contracts, _bench = compiled
+        sender, sk = account
+        h = Arc4Harness(anchor_contracts["TrustedRootAnchor"], sender, sk)
+        h.create([sender, m4probe.app_id, RING_N], extra_pages=1, fund_app=15_000_000)
+        h.ring_n = RING_N
+        h.submit([{
+            "method": "append_fork_row",
+            "args": [0, synth.G_STATE_ROOT, synth.G_RECEIPTS_ROOT, synth.G_BLOCK_NUMBER, synth.G_BLOCK_ROOTS_BASE],
+        }])
+        # deliberately: no ring_init_chunk
+
+        args, fin_root, fin_state_root, _s, _r = _direct_anchor_args(m4probe.app_id, block_number=109)
+        _set_m4(m4probe, FIN_SLOT, fin_root, fin_state_root)
+        callee_id, issuer_id = donors
+        with pytest.raises(Exception) as exc_info:
+            h.submit_with_donor(
+                "anchor_direct", args, donor_issuer_id=issuer_id, donor_callee_id=callee_id,
+                n_donors=12, apps=[m4probe.app_id],
+            )
+        assert "assert failed" in str(exc_info.value)
+
+    def test_N11_frozen_blocks_pin(self, anchor, m4probe, account, donors):
+        """`pin`'s own explicit check: `assert self.frozen == UInt64(0),
+        "N11"`. `freeze()` (governance) is called AFTER a block is
+        genuinely anchored and pin-able -- proving N11, not N12/N24, is
+        what blocks the subsequent `pin` (the funding payment is honest:
+        correct receiver, sufficient amount)."""
+        from algosdk import transaction
+        from algosdk.abi import Method
+        from algosdk.atomic_transaction_composer import (
+            AccountTransactionSigner,
+            AtomicTransactionComposer,
+            TransactionWithSigner,
+        )
+        from algosdk.logic import get_application_address
+
+        sender, sk = account
+        args, fin_root, fin_state_root, _s, _r = _direct_anchor_args(m4probe.app_id, block_number=110)
+        _set_m4(m4probe, FIN_SLOT, fin_root, fin_state_root)
+        _anchor_direct_submit(anchor, donors, args, m4probe.app_id)
+
+        anchor.submit([{"method": "freeze", "args": []}])
+
+        algod = anchor.algod
+        atc = AtomicTransactionComposer()
+        signer = AccountTransactionSigner(sk)
+        sp_pay = algod.suggested_params()
+        pay_txn = transaction.PaymentTxn(sender, sp_pay, get_application_address(anchor.app_id), 80_900)
+        sp_pin = algod.suggested_params(); sp_pin.flat_fee = True; sp_pin.fee = 2000
+        atc.add_method_call(
+            app_id=anchor.app_id, method=Method.undictify(anchor.methods["pin"]),
+            sender=sender, sp=sp_pin, signer=signer,
+            method_args=[110, TransactionWithSigner(pay_txn, signer)],
+            boxes=[_ring_box(110), _pin_box(110)],
+        )
+        with pytest.raises(Exception) as exc_info:
+            atc.execute(algod, 4)
+        assert "assert failed" in str(exc_info.value)
+
+
+class TestGovernanceAndConflictErrorCodes:
+    def test_N22_conflict_latch_blocks_pin(self, anchor, m4probe, donors, account):
+        """`pin`'s own explicit `assert self.conflict == UInt64(0), "N22"`
+        -- a distinct call site from `attest`'s (already functionally
+        exercised by `TestRetentionRing::
+        test_equivocation_latches_conflict_then_gov_clear_restores`), but
+        never itself literally NAMED anywhere in this suite before now, so
+        the coverage-discipline word-scan (its own documented "text match,
+        not a functional verification" caveat) never credited it. Latch
+        `conflict` via a genuine equivocation, then attempt `pin` (an
+        otherwise honest payment) on the SAME block number."""
+        args, fin_root, fin_state_root, _s, _r = _direct_anchor_args(m4probe.app_id, block_number=111)
+        _set_m4(m4probe, FIN_SLOT, fin_root, fin_state_root)
+        _anchor_direct_submit(anchor, donors, args, m4probe.app_id)
+
+        args2, fin_root2, fin_state_root2, _s2, _r2 = _direct_anchor_args(
+            m4probe.app_id, block_number=111, beacon_slot=FIN_SLOT
+        )
+        _set_m4(m4probe, FIN_SLOT, fin_root2, fin_state_root2)
+        conflicting = _anchor_direct_submit(anchor, donors, args2, m4probe.app_id)
+        assert conflicting.tx_ids, "the equivocating call itself must succeed so the latch persists"
+
+        from algosdk import transaction
+        from algosdk.abi import Method
+        from algosdk.atomic_transaction_composer import (
+            AccountTransactionSigner,
+            AtomicTransactionComposer,
+            TransactionWithSigner,
+        )
+        from algosdk.logic import get_application_address
+
+        sender, sk = account
+        algod = anchor.algod
+        atc = AtomicTransactionComposer()
+        signer = AccountTransactionSigner(sk)
+        sp_pay = algod.suggested_params()
+        pay_txn = transaction.PaymentTxn(sender, sp_pay, get_application_address(anchor.app_id), 80_900)
+        sp_pin = algod.suggested_params(); sp_pin.flat_fee = True; sp_pin.fee = 2000
+        atc.add_method_call(
+            app_id=anchor.app_id, method=Method.undictify(anchor.methods["pin"]),
+            sender=sender, sp=sp_pin, signer=signer,
+            method_args=[111, TransactionWithSigner(pay_txn, signer)],
+            boxes=[_ring_box(111), _pin_box(111)],
+        )
+        with pytest.raises(Exception) as exc_info:
+            atc.execute(algod, 4)
+        assert "assert failed" in str(exc_info.value)
+
+    def test_N23_non_governance_sender_rejected(self, anchor):
+        """§6.4: every governance-only method rejects a non-`gov` sender.
+        Mirrors the sibling M4 suite's own established pattern exactly
+        (`tests/sync_committee/test_forks_state.py::
+        test_f10_non_governance_append_rejected`): pull a SECOND key from
+        dev-mode kmd's own default wallet (never the harness's own
+        governance signer) and call `freeze()` with it."""
+        from tests.harness.chain import kmd_client
+
+        kmd = kmd_client()
+        wallets = kmd.list_wallets()
+        wid = next(w["id"] for w in wallets if w["name"] == "unencrypted-default-wallet")
+        handle = kmd.init_wallet_handle(wid, "")
+        try:
+            addrs = kmd.list_keys(handle)
+            other_addr = next((a for a in addrs if a != anchor.sender), None)
+            if other_addr is None:
+                pytest.skip(
+                    "dev-mode kmd's default wallet has only one key -- "
+                    "cannot exercise a non-governance sender"
+                )
+            other_sender = other_addr
+            other_sk = kmd.export_key(handle, "", other_addr)
+        finally:
+            kmd.release_wallet_handle(handle)
+
+        from algosdk.abi import Method
+        from algosdk.atomic_transaction_composer import AccountTransactionSigner, AtomicTransactionComposer
+
+        method = Method.undictify(anchor.methods["freeze"])
+        atc = AtomicTransactionComposer()
+        signer = AccountTransactionSigner(other_sk)
+        sp = anchor.algod.suggested_params()
+        sp.flat_fee = True
+        sp.fee = 1000
+        atc.add_method_call(
+            app_id=anchor.app_id, method=method, sender=other_sender, sp=sp, signer=signer, method_args=[],
+        )
+        with pytest.raises(Exception) as exc_info:
+            atc.execute(anchor.algod, 4)
+        assert "assert failed" in str(exc_info.value)
+
+    def test_N24_pin_wrong_receiver_rejected(self, anchor, m4probe, donors, account):
+        """`pin`: `assert payment.receiver == Global.current_application_
+        address, "N24"`. A genuinely admitted, pin-able block with a
+        Payment that is otherwise well-funded (>= 80,900) but addressed to
+        the SENDER's own account instead of the app."""
+        from algosdk import transaction
+        from algosdk.abi import Method
+        from algosdk.atomic_transaction_composer import (
+            AccountTransactionSigner,
+            AtomicTransactionComposer,
+            TransactionWithSigner,
+        )
+
+        sender, sk = account
+        args, fin_root, fin_state_root, _s, _r = _direct_anchor_args(m4probe.app_id, block_number=112)
+        _set_m4(m4probe, FIN_SLOT, fin_root, fin_state_root)
+        _anchor_direct_submit(anchor, donors, args, m4probe.app_id)
+
+        algod = anchor.algod
+        atc = AtomicTransactionComposer()
+        signer = AccountTransactionSigner(sk)
+        sp_pay = algod.suggested_params()
+        pay_txn = transaction.PaymentTxn(sender, sp_pay, sender, 80_900)  # wrong receiver: self, not the app
+        sp_pin = algod.suggested_params(); sp_pin.flat_fee = True; sp_pin.fee = 2000
+        atc.add_method_call(
+            app_id=anchor.app_id, method=Method.undictify(anchor.methods["pin"]),
+            sender=sender, sp=sp_pin, signer=signer,
+            method_args=[112, TransactionWithSigner(pay_txn, signer)],
+            boxes=[_ring_box(112), _pin_box(112)],
+        )
+        with pytest.raises(Exception) as exc_info:
+            atc.execute(algod, 4)
+        assert "assert failed" in str(exc_info.value)
+
+    def test_N24_pin_underfunded_rejected(self, anchor, m4probe, donors, account):
+        """`pin`: `assert payment.amount >= UInt64(80_900), "N24"`. Same
+        shape as the wrong-receiver case, but the receiver is correct and
+        the amount is one microAlgo short of the real box MBR."""
+        from algosdk import transaction
+        from algosdk.abi import Method
+        from algosdk.atomic_transaction_composer import (
+            AccountTransactionSigner,
+            AtomicTransactionComposer,
+            TransactionWithSigner,
+        )
+        from algosdk.logic import get_application_address
+
+        sender, sk = account
+        args, fin_root, fin_state_root, _s, _r = _direct_anchor_args(m4probe.app_id, block_number=113)
+        _set_m4(m4probe, FIN_SLOT, fin_root, fin_state_root)
+        _anchor_direct_submit(anchor, donors, args, m4probe.app_id)
+
+        algod = anchor.algod
+        atc = AtomicTransactionComposer()
+        signer = AccountTransactionSigner(sk)
+        sp_pay = algod.suggested_params()
+        pay_txn = transaction.PaymentTxn(sender, sp_pay, get_application_address(anchor.app_id), 80_899)
+        sp_pin = algod.suggested_params(); sp_pin.flat_fee = True; sp_pin.fee = 2000
+        atc.add_method_call(
+            app_id=anchor.app_id, method=Method.undictify(anchor.methods["pin"]),
+            sender=sender, sp=sp_pin, signer=signer,
+            method_args=[113, TransactionWithSigner(pay_txn, signer)],
+            boxes=[_ring_box(113), _pin_box(113)],
+        )
+        with pytest.raises(Exception) as exc_info:
+            atc.execute(algod, 4)
+        assert "assert failed" in str(exc_info.value)
+
+
+def _deploy_anchor_receipt_probe(anchor):
+    """Compiles+deploys `AnchorReceiptProbe` (a raw `Contract`, no ARC-4)
+    against the REAL, already-deployed anchor app id -- TP-M8-4's actual
+    compile-time binding step, done for real. Mirrors
+    `TestTPM84CompileTimeConstant`'s own established deploy sequence
+    exactly (duplicated rather than shared, matching this codebase's own
+    convention of not reaching into another class's private helper)."""
+    from algosdk import transaction
+
+    algod = anchor.algod
+    patched_root = patched_repo_copy(anchor.app_id)
+    probe_src = patched_root / "contracts" / "state_anchor" / "bench_app.py"
+    probe_contracts = puya_compile(probe_src, extra_pythonpath=patched_root)
+    approval = compile_teal(algod, probe_contracts["AnchorReceiptProbe"]["approval"])
+    clear = compile_teal(algod, probe_contracts["AnchorReceiptProbe"]["clear"])
+
+    sender, sk = anchor.sender, anchor.sk
+    sp = algod.suggested_params()
+    create_txn = transaction.ApplicationCreateTxn(
+        sender=sender, sp=sp, on_complete=transaction.OnComplete.NoOpOC,
+        approval_program=approval, clear_program=clear,
+        global_schema=transaction.StateSchema(0, 0), local_schema=transaction.StateSchema(0, 0),
+        extra_pages=1,
+    )
+    stxn = create_txn.sign(sk)
+    txid = algod.send_transaction(stxn)
+    confirmed = transaction.wait_for_confirmation(algod, txid, 4)
+    return confirmed["application-index"]
+
+
+class TestHandoffErrorCodes:
+    """`contracts/state_anchor/handoff.py::anchor_from_group` -- not wired
+    into the deployed `TrustedRootAnchor` itself (that file's own module
+    docstring), but real, compiled, and exercised live via
+    `AnchorReceiptProbe`'s `MODE_AGAINST_ANCHOR`, the SAME sanctioned
+    mechanism `TestTPM84CompileTimeConstant::test_forged_app_id_is_rejected`
+    already uses to prove `N2`. These two close the two OTHER checks in the
+    same subroutine, both ahead of the M7/M6-repack-shaped part of it."""
+
+    def test_N1_replay_from_same_or_later_group_index_rejected(self, anchor):
+        """`assert gi < Txn.group_index, "N1"`. The cheapest possible
+        construction: a SOLO (ungrouped) call, so `Txn.group_index == 0`;
+        pointing `anchor_gi` at 0 (itself) violates `0 < 0` immediately,
+        before `anchor_from_group` even reads the referenced transaction --
+        no real anchor call is needed in the group at all."""
+        from algosdk import transaction
+        from algosdk.v2client.models import SimulateRequest, SimulateRequestTransactionGroup
+
+        sender, sk = anchor.sender, anchor.sk
+        probe_app_id = _deploy_anchor_receipt_probe(anchor)
+        algod = anchor.algod
+
+        fixed = (0).to_bytes(8, "big") + (0).to_bytes(8, "big") + (0).to_bytes(8, "big") + (0).to_bytes(2, "big")
+        sp = algod.suggested_params(); sp.flat_fee = True; sp.fee = 1000
+        probe_txn = transaction.ApplicationCallTxn(
+            sender=sender, sp=sp, index=probe_app_id, on_complete=transaction.OnComplete.NoOpOC,
+            app_args=[b"RCP1", bytes([5]), bytes([0]), fixed],
+        )
+        stxn = probe_txn.sign(sk)
+        sreq = SimulateRequest(
+            txn_groups=[SimulateRequestTransactionGroup(txns=[stxn])], allow_unnamed_resources=True,
+        )
+        resp = algod.simulate_transactions(sreq)
+        grp = resp["txn-groups"][0]
+        assert grp.get("failure-message"), "anchor_gi >= the caller's own group index must be rejected"
+        assert "assert failed" in grp["failure-message"]
+
+    def test_N3_wrong_selector_predecessor_rejected(self, anchor):
+        """`assert prev.app_args(0) == ATTEST_SELECTOR, "N3"`. Group:
+        [`anchor.noop_budget()` at gi=0 -- a REAL call to the REAL,
+        deployed anchor app, so `N2`'s own app-id check passes -- then the
+        probe's `MODE_AGAINST_ANCHOR` at gi=1, `anchor_gi=0`]. `gi(0) <
+        group_index(1)` passes (N1 ok); `prev.app_id == ANCHOR_APP_ID`
+        passes (N2 ok); but `noop_budget`'s selector is not `attest`'s, so
+        `N3` fires."""
+        from algosdk import transaction
+        from algosdk.abi import Method
+        from algosdk.atomic_transaction_composer import (
+            AccountTransactionSigner,
+            AtomicTransactionComposer,
+            TransactionWithSigner,
+        )
+
+        sender, sk = anchor.sender, anchor.sk
+        probe_app_id = _deploy_anchor_receipt_probe(anchor)
+        algod = anchor.algod
+
+        signer = AccountTransactionSigner(sk)
+        atc = AtomicTransactionComposer()
+        sp1 = algod.suggested_params(); sp1.flat_fee = True; sp1.fee = 1000
+        atc.add_method_call(
+            app_id=anchor.app_id, method=Method.undictify(anchor.methods["noop_budget"]),
+            sender=sender, sp=sp1, signer=signer, method_args=[],
+        )
+        fixed = (0).to_bytes(8, "big") + (0).to_bytes(8, "big") + (0).to_bytes(8, "big") + (0).to_bytes(2, "big")
+        sp2 = algod.suggested_params(); sp2.flat_fee = True; sp2.fee = 1000
+        probe_txn = transaction.ApplicationCallTxn(
+            sender=sender, sp=sp2, index=probe_app_id, on_complete=transaction.OnComplete.NoOpOC,
+            app_args=[b"RCP1", bytes([5]), bytes([0]), fixed],
+        )
+        atc.add_transaction(TransactionWithSigner(probe_txn, signer))
+        with pytest.raises(Exception) as exc_info:
+            atc.execute(algod, 4)
+        assert "assert failed" in str(exc_info.value)

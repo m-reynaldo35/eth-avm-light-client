@@ -1,24 +1,56 @@
 # Committed baseline (docs/design/011-test-harness-ci.md §9.1, 008 §15.5
 # item 4, G9-M8). Measured this pass: 22 distinct numeric error codes exist
-# under contracts/** (N1-N17, N20-N24), of which 9 are mentioned anywhere in
-# tests/** or relayer/** (N2, N4, N5, N6, N9, N12, N13, N15, N20) -- a
-# generous upper bound (a word-boundary text match over test names,
-# docstrings and string literals, which certainly over-counts "exercised").
-# The 13 below are never mentioned anywhere. Adding a new code without a
-# test is a red build (test_coverage_discipline.py F-2); deliberately
-# deferring one is a one-line, reviewable, blame-able diff to THIS file.
-# Closing these is M8's work, not M11's (§9.1) -- M11 owns the discipline
-# that stops the list growing unnoticed, not the coverage itself.
-N1
-N3
-N7
-N8
-N10
-N11
+# under contracts/** (N1-N17, N20-N24), of which 9 were mentioned anywhere in
+# tests/** or relayer/** at the PREVIOUS baseline (N2, N4, N5, N6, N9, N12,
+# N13, N15, N20) -- a generous upper bound (a word-boundary text match over
+# test names, docstrings and string literals, which certainly over-counts
+# "exercised"). This pass closed 11 more with real, live tests against real
+# dev-mode algod, submitted for real (`simulate`/`execute`, matching this
+# suite's own established discipline of matching generically on "assert
+# failed" and proving the SPECIFIC scenario constructed could only have
+# tripped one assert -- never the stripped-comment code string itself):
+# N1, N3, N7, N8, N10, N11, N16, N17, N22, N23, N24
+# (tests/state_anchor/test_core.py -- TestSecurityErrorCodes,
+# TestRingLifecycleErrorCodes, TestGovernanceAndConflictErrorCodes,
+# TestHandoffErrorCodes).
+#
+# The 2 below remain open, and NOT for lack of a test written yet -- both
+# are genuinely unreachable via any real transaction group, proven rather
+# than merely asserted, so forcing a "passing" test for either would be a
+# fabricated pass, not a real one:
+#
+#   N14 -- attest()'s pinned-tier check (a_version(pinned) == 1). The ONLY
+#   writer of a pinned box is box.pin_write (contracts/state_anchor/box.py),
+#   which always copies a ring record that JUST passed the "version != 0"
+#   check (N12) -- and the ONLY value any ring write ever stores at the
+#   version byte is the literal VERSION_1 constant from
+#   record.build_record (ring boxes are zero-filled at ring_init_chunk, so
+#   the only other possible value is 0, already excluded by N12). No ARC4
+#   method in anchor_app.py writes any other byte to that offset --
+#   revoke() only ever touches the flags byte (offset 1). A pinned record's
+#   version is therefore always exactly 1 by construction, whenever it
+#   exists at all; this defensive check cannot fire on any honestly- or
+#   adversarially-constructed group.
+#
+#   N21 -- box.ring_admit_and_write's RING_WRITE_REGRESSION branch
+#   (ex_block > new_block in the same ring residue slot). box.py's own
+#   docstring already names this "unreachable via the honest path once
+#   N-ADMIT holds (§5.4's distinctness lemma)" -- independently re-derived
+#   this pass: N-ADMIT (checked earlier in the SAME call) requires
+#   new_block + ring_n > hi_block, i.e. new_block > hi_block - ring_n. Any
+#   record already occupying the slot (ex_block) was itself admitted at
+#   some earlier hi_block' <= the current hi_block (hi_block is
+#   monotonic non-decreasing), so ex_block <= hi_block. Combined:
+#   ex_block - new_block < hi_block - (hi_block - ring_n) = ring_n. But a
+#   same-residue collision requires ex_block - new_block to be a POSITIVE
+#   MULTIPLE of ring_n (i.e. >= ring_n) -- a contradiction. No real group
+#   can reach this branch with ex_block > new_block while N-ADMIT holds.
+#
+# Adding a new code without a test is a red build (test_coverage_discipline.py
+# F-2); deliberately deferring one -- including these two, now that they are
+# proven-not-merely-claimed unreachable -- is a one-line, reviewable,
+# blame-able diff to THIS file. Closing these is M8's work, not M11's
+# (§9.1) -- M11 owns the discipline that stops the list growing unnoticed,
+# not the coverage itself.
 N14
-N16
-N17
 N21
-N22
-N23
-N24
