@@ -296,6 +296,28 @@ async def keeper_run(authorization: str = Header(default="")):
     return out
 
 
+@app.get("/")
+async def index():
+    """FastAPI has no route for a bare '/' otherwise (this is an API, not a
+    site), which means anyone clicking the domain link cold -- Discord,
+    Reddit, a browser address bar -- gets a bare 404 with no context. This
+    exists purely so a curious human lands on something explaining what
+    they're looking at, not a wall of {"detail":"Not Found"}."""
+    return {
+        "name": "ETH-AVM Light Client -- receipt proof service",
+        "description": "Verifies Ethereum receipt/log inclusion via real Algorand smart "
+                        "contracts. Two trust models: RPC-trusted (fast, T1+T2) or fully "
+                        "trustless (the receiptsRoot itself checked against a real "
+                        "sync-committee-signed anchor, zero RPC trust). Paid per call via x402.",
+        "repo": "https://github.com/m-reynaldo35/eth-avm-light-client",
+        "health": "/health",
+        "routes": {
+            "GET /verify-receipt/{block_number}/{tx_index}/{log_index}": "RPC-trusted, 0.01 USDC",
+            "GET /verify-receipt-trustless/{block_number}/{tx_index}/{log_index}": "zero RPC trust, 0.01 USDC",
+        },
+    }
+
+
 @app.get("/health")
 async def health():
     status = receipts_client.algod.status()
