@@ -27,7 +27,7 @@ class ContractTarget:
     genesis_validators_root: str | None = None  # M4 only, 0x-hex
     m4_app_id: int | None = None  # M8 only -- if unset, taken from the manifest
     ring_n: int = 128  # M8 only, 008 §7.8's recommendation
-    t2_float: bool = False  # M7 only
+    t2_float: bool = False  # M7 / m7_anchored only
 
 
 @dataclass

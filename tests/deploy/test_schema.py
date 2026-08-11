@@ -210,11 +210,22 @@ def test_drift_3_creator_mbr_is_806500_not_378000():
 # bare-`Contract` driver. The schema now correctly reflects the CURRENT,
 # fixed bytecode -- 4 bytes larger each -- not the design doc's stale
 # pre-fix citation.
+#
+# 014 §5.2: `Mpt7ReceiptApp` grew another 4 B (3,108 -> 3,112) when
+# `contracts/receipt/box.py::mpt7_stage_open` gained the delete-before-create
+# fix -- `Mpt7ReceiptApp` imports that subroutine unmodified, so its own
+# compiled size moves whenever the subroutine does. This is a REAL source
+# change with no matching mainnet redeployment yet: the already-deployed
+# mainnet m7 app (id 3665914633, on_completion-gated `NoOp only`) cannot be
+# updated in place to pick this fix up, so it remains squattable (§5.2) until
+# a human deploys a fresh Mpt7ReceiptApp and the manifest/versions.json entries
+# below are regenerated against that live app -- see
+# docs/design/014-t2-against-anchor.md's implementation report.
 # ---------------------------------------------------------------------------
 def test_m6_m7_sizes_reflect_the_oncompletion_fix_not_the_stale_design_doc_number():
     schemas = generate.generate_all()
     assert schemas["Mpt6ComposerApp"]["program"]["approval_bytes"] == 2680  # design doc cited 2,676 pre-fix
-    assert schemas["Mpt7ReceiptApp"]["program"]["approval_bytes"] == 3108  # design doc cited 3,104 pre-fix
+    assert schemas["Mpt7ReceiptApp"]["program"]["approval_bytes"] == 3112  # 014 §5.2: +4 B, delete-before-create
 
 
 def test_on_completion_gate_is_noop_only_for_all_four_current_contracts():

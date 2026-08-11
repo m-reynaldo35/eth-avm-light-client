@@ -95,6 +95,11 @@
       "needs_network": 0,
       "offline": 12
     },
+    "tests/receipt/test_anchored_app_live.py": {
+      "needs_algod": 3,
+      "needs_network": 0,
+      "offline": 0
+    },
     "tests/relayer/test_box_budget_model.py": {
       "needs_algod": 3,
       "needs_network": 0,
@@ -304,8 +309,8 @@
   },
   "generated_by": "pytest --write-tier-manifest",
   "totals": {
-    "collected": 643,
-    "live": 106,
+    "collected": 646,
+    "live": 109,
     "live_heavy": 2,
     "offline": 535
   }

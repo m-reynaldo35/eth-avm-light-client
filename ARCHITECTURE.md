@@ -67,6 +67,24 @@ hard argument-size cap for M8). See
 per-contract fork decision table, and the standing 1,212-byte M4 bytecode
 headroom.
 
+## Deployed vs. test-only contracts
+
+Every module that is meant to run for real is a **permanently deployed,
+manifest-pinned** app — `deploy/plans/*.py`, `deploy/manifests/*.json`.
+Anything that says "NEVER deploy to mainnet" in its own module docstring
+(`contracts/*/bench_app.py`) is reference/test infrastructure only, compiled
+on demand by the test suite or the relayer, never something `deploy apply`
+touches. `contracts/receipt/anchored_app.py::Mpt7AnchoredReceiptApp`
+(`deploy/plans/m7_anchored.py`) is the newest member of the first group —
+the permanent combination of M7's T1+T2 receipt walk with M8's anchor
+check, replacing the test-only, compiled-per-call `AnchorReceiptProbe` for
+that path (docs/design/014-t2-against-anchor.md §4.1). Like
+`TrustedRootAnchor`, its compiled bytecode is genuinely
+network-specific — `contracts/state_anchor/handoff.py::ANCHOR_APP_ID` is
+patched to the real M8 app id at build time (TP-M8-4), so its
+`approval_sha256` pin is per-manifest, not a single global constant the way
+`Mpt6ComposerApp`/`Mpt7ReceiptApp`'s are (`deploy/versions.json`).
+
 ## CI: two workflows from commit one
 
 - `ci-offline.yml` — lint + unit tests against pinned, recorded fixtures

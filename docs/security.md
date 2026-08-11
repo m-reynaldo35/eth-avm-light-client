@@ -95,6 +95,50 @@ This is why Bazaar discovery registration was declined for this release
 (a directory listing is a stronger availability claim than this project
 can currently back) — see `CHANGELOG.md`.
 
+## Known live findings (014): one fixed everywhere, one fixed in source only
+
+Two real defects in already-shipped code were found while building [014
+(T2 receipt proofs against an M8 anchor)](design/014-t2-against-anchor.md),
+disclosed here explicitly rather than buried inside a new module's own row:
+
+**`AnchorReceiptProbe` had no `on_completion` guard (fixed, `bd3f2a7`).**
+`contracts/state_anchor/bench_app.py`'s `AnchorReceiptProbe` — the only
+mechanism that drives `prove_receipt(against_anchor=True)` on a T1 leaf —
+was missing the `assert Txn.on_completion == NoOp` guard every other bench
+app in this repo carries. Live-verified: `UpdateApplication` with an
+always-approve program was **accepted**. Because `EthAvmClient` deploys a
+fresh probe in one transaction and submits the real proof group in a
+*separate* one, this was a real, observable, exploitable window on
+mainnet — any account could hijack the probe between the two and have a
+fabricated `MODE_AGAINST_ANCHOR` log accepted as a proven Ethereum fact,
+bypassing every other check in the chain (BLS, SSZ, the keccak hash chain,
+`ANCHOR_APP_ID`'s compile-time binding — none of them run if the program
+itself is not the one you audited). Fixed with the standard one-line guard;
+re-verified live (`UpdateApplication`/`DeleteApplication` both rejected).
+
+**`mpt7_stage_open` had no box-name squatting protection (fixed in
+source; the deployed mainnet `Mpt7ReceiptApp` is NOT yet fixed).**
+`contracts/receipt/box.py::mpt7_stage_open` called `op.Box.create` without
+first deleting any pre-existing box under the same (permissionless, by
+design — see [014 §7.1](design/014-t2-against-anchor.md)) name. Since
+`box_create` fails hard on a size mismatch, anyone could pre-create a box
+at the wrong size under a name the driver was about to use and break every
+honest T2 proof that picked it. Fixed (delete-before-create) in this
+repo's source tree, and the off-chain box-name derivation
+(`relayer/drivers/m7_receipt.py::derive_t2_box_name`) now adds a block
+component and a random nonce so a name can no longer be pre-computed
+either. **This finding applies to the live mainnet `Mpt7ReceiptApp` app
+(`3665914633`) too** — and that app's OWN `on_completion` guard (the fix
+above, applied everywhere on the same day) makes it permanently
+un-updatable in place, so the fix cannot reach it without a fresh deploy.
+Until a human runs one, the live mainnet app remains squattable in
+principle (the design doc's own severity note: expensive and self-limiting
+for the squatter under the single-atomic-group rule, not free or
+repeatable, but real). `deploy resolve`/`deploy verify` against mainnet
+correctly report this app `CODE_MISMATCH`, not `USABLE`, reflecting the
+real drift between source and what is live — this is the tooling working
+as designed (see the section above), not a bug in the tooling.
+
 ## Packaged wheel vs. checkout
 
 The published `eth-avm-relayer` wheel contains only `relayer/` — 35 `.py`

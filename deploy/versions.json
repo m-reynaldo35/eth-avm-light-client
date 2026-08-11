@@ -25,8 +25,8 @@
       "source": "contracts/composer/bench_app.py"
     },
     "Mpt7ReceiptApp": {
-      "approval_bytes": 3108,
-      "code_id": "f7a846ff33314d8f9ecc48e85584327f13e9cb808a3650b30e69339c7fcdc9d2",
+      "approval_bytes": 3112,
+      "code_id": "c4bad6f9fef3cfc2ebbb0114c0395e3ffa115f2df0e9ec65a3c0943a407e577d",
       "design_doc": "docs/design/007-receipt-log-proof.md",
       "fork_axis": "none",
       "proof_system": null,

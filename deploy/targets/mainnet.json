@@ -10,6 +10,7 @@
     "m4": {"deploy": false, "genesis_validators_root": "0x4b363db94e286120d76eb905340fdd4e54bfe9f06bf33ff6cf5ad27f511bfe95"},
     "m8": {"deploy": false, "ring_n": 128},
     "m7": {"deploy": false, "t2_float": true},
+    "m7_anchored": {"deploy": false, "t2_float": true},
     "m6": {"deploy": false}
   },
   "forks": ["deneb", "electra", "fulu"]

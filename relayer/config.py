@@ -31,6 +31,13 @@ class RelayerConfig:
     m6_app_id: int | None = None
     m7_app_id: int | None = None
     m8_app_id: int | None = None
+    # 014 §4.1/§9: the permanent, manifest-pinned `Mpt7AnchoredReceiptApp`
+    # (contracts/receipt/anchored_app.py) -- required only for
+    # prove_receipt(against_anchor=True) on a T2 (box-staged) leaf; T1
+    # against-anchor still drives the per-call-compiled `AnchorReceiptProbe`
+    # unchanged (docs/design/014-t2-against-anchor.md §4.1's implementation
+    # note on scope).
+    m7_anchored_app_id: int | None = None
     donor_issuer_id: int | None = None
     donor_callee_id: int | None = None
     eth_rpcs: list[str] = field(default_factory=lambda: list(DEFAULT_ETH_RPCS))
@@ -56,6 +63,7 @@ class RelayerConfig:
             m6_app_id=_int_or_none("M6_APP_ID"),
             m7_app_id=_int_or_none("M7_APP_ID"),
             m8_app_id=_int_or_none("M8_APP_ID"),
+            m7_anchored_app_id=_int_or_none("M7_ANCHORED_APP_ID"),
             donor_issuer_id=_int_or_none("DONOR_ISSUER_ID"),
             donor_callee_id=_int_or_none("DONOR_CALLEE_ID"),
             eth_rpcs=os.environ.get("ETH_RPCS", "").split(",") if os.environ.get("ETH_RPCS") else list(DEFAULT_ETH_RPCS),

@@ -288,27 +288,27 @@ class EthAvmClient:
             )
 
         if against_anchor:
-            if cls_result.tier != "T1":
-                # A real, contract-level gap, not a client one: no deployed
-                # "M7+M8 combined, box-staged" app exists anywhere in this
-                # codebase -- `AnchorReceiptProbe` (the only real M7+M8
-                # combination that exists) implements MODE_INIT/MODE_NEXT
-                # only, by design (§9.2's own scope, test_live_historical.
-                # py's own docstring: "a receipt needing box-staging is out
-                # of scope for this probe by design, not oversight").
-                raise TierUnsupported(
-                    f"leaf {cls_result.leaf_len} B is T2 (box-staged) -- AnchorReceiptProbe only "
-                    "implements the T1 MODE_INIT/MODE_NEXT raw-arg walk path; a T2-against-anchor "
-                    "combined proof has no deployed contract anywhere in this codebase to drive "
-                    "(a real, contract-level gap, not a client limitation)"
-                )
             self._require_signer_and_donors("prove_receipt(against_anchor=True)")
             el_block_number = int(header["number"], 16)
+            if cls_result.tier == "T2":
+                # 014 §4/§9: closes the gap this raise used to guard --
+                # `Mpt7AnchoredReceiptApp` (contracts/receipt/anchored_app.py)
+                # is a permanent, manifest-pinned app combining M7's T2
+                # box-staged walk with M8's anchor check, unlike
+                # `AnchorReceiptProbe` (T1-only, compiled per call).
+                if self.config.m7_anchored_app_id is None:
+                    raise ValueError(
+                        "prove_receipt(against_anchor=True) on a T2 leaf needs m7_anchored_app_id "
+                        "configured (the deployed Mpt7AnchoredReceiptApp -- docs/design/"
+                        "014-t2-against-anchor.md §4.1/§9)"
+                    )
+                return self._submit_t2_receipt_against_anchor(root_hash, tx_index, log_index, nodes, el_block_number)
             return self._submit_receipt_against_anchor(root_hash, tx_index, log_index, nodes, el_block_number)
 
         if cls_result.tier == "T2":
             self._require_signer_and_donors("prove_receipt() T2")
-            return self._submit_t2_receipt(root_hash, tx_index, log_index, nodes)
+            el_block_number = int(header["number"], 16)
+            return self._submit_t2_receipt(root_hash, tx_index, log_index, nodes, el_block_number)
 
         if not self.config.has_signer:
             raise ValueError("prove_receipt() needs a signer configured to submit a real T1 group")
@@ -354,12 +354,25 @@ class EthAvmClient:
             raise m7.M7Error("no log produced by the result transaction")
         decoded = m7.decode_r(result.logs[-1])
         decoded["confirmed_round"] = result.confirmed_round
+        decoded["measured_consumed"] = result.measured_consumed
         return ReceiptResult(
             rstatus_name=decoded["rstatus_name"], fields=decoded,
             confirmed_round=result.confirmed_round, tx_ids=result.tx_ids,
         )
 
-    def _submit_t2_receipt(self, receipts_root: bytes, tx_index: int, log_index: int, nodes: list[bytes]) -> ReceiptResult:
+    def _t2_payment_amount(self, app_address: str, leaf_len: int) -> int:
+        """014 §3.6/§5.3: pay only the REAL shortfall against a live
+        `account_info` read, never the full box-MBR figure unconditionally
+        -- §3.6's own measured finding was that the old unconditional
+        payment stranded 5.53 ALGO of recoverable float in the app account
+        across three consecutive proofs. Returns 0 once a prior call's
+        float already covers `m7.t2_box_mbr_requirement(leaf_len)`."""
+        info = self.algod.account_info(app_address)
+        required = m7.t2_box_mbr_requirement(leaf_len)
+        return max(0, required - info["amount"])
+
+    def _submit_t2_receipt(self, receipts_root: bytes, tx_index: int, log_index: int, nodes: list[bytes],
+                            el_block_number: int) -> ReceiptResult:
         """T2 (box-staged) real submission (§12, G5-M9): a `DonorIssuer`
         sibling (§18 item 5, MUST #5 -- never 8 filler NoOps here either),
         a `PaymentTxn` funding the oversized leaf's box MBR to the APP
@@ -367,20 +380,20 @@ class EthAvmClient:
         before `MODE_STAGE_OPEN`, then the real
         `relayer.group.submit.run` loop. Targets the design doc's own
         §7.1 finding: with a donor sibling instead of 8 fillers, T2 cache-
-        miss drops from 17 txns to <=10."""
+        miss drops from 17 txns to <=10.
+
+        014 §5.2/§5.3: the box name now carries a block component and a
+        random nonce (`m7.derive_t2_box_name`, not a deterministic function
+        of `(tx_index, log_index)` alone -- squattable ahead of time,
+        measured), and the `PaymentTxn` amount is conditional on a real
+        `account_info` read (`_t2_payment_amount`), not unconditional."""
         signer = self._signer()
-        # `Mpt7ReceiptApp`'s MODE_STAGE_OPEN/WRITE/WALK all assert `fixed.
-        # length == 10` (name(8) || offset_or_leaf_len(2)) -- the box name
-        # MUST be exactly 8 bytes, not merely "unique enough". Each real
-        # call is its own atomic group and the box is closed (`mpt7_stage_
-        # close`) inside the SAME group (§9.2), so a name derived from
-        # (tx_index, log_index) only needs to avoid colliding with a
-        # concurrently in-flight call, not persist any identity.
-        box_name = b"t2" + tx_index.to_bytes(4, "big") + log_index.to_bytes(2, "big")
-        _tier, calls, box_name, fund_amount = m7.plan_receipt_calls_t2(
+        box_name = m7.derive_t2_box_name(el_block_number)
+        _tier, calls, box_name, _static_fund_amount = m7.plan_receipt_calls_t2(
             receipts_root, tx_index, log_index, nodes, box_name, group_offset=2
         )
         app_address = logic.get_application_address(self.config.m7_app_id)
+        leaf_len = len(nodes[-1])
 
         def build_group(n_donors: int):
             atc = AtomicTransactionComposer()
@@ -388,7 +401,8 @@ class EthAvmClient:
                 self.algod, self._sender, self._sk, self.config.donor_issuer_id, self.config.donor_callee_id, n_donors
             ))
             sp_pay = self.algod.suggested_params()
-            pay_txn = transaction.PaymentTxn(self._sender, sp_pay, app_address, fund_amount)
+            pay_amount = self._t2_payment_amount(app_address, leaf_len)
+            pay_txn = transaction.PaymentTxn(self._sender, sp_pay, app_address, pay_amount)
             atc.add_transaction(TransactionWithSigner(pay_txn, signer))
             for call in calls:
                 sp = self.algod.suggested_params()
@@ -414,6 +428,7 @@ class EthAvmClient:
         decoded = m7.decode_r(result.logs[-1])
         decoded["confirmed_round"] = result.confirmed_round
         decoded["n_transactions"] = n_total_txns
+        decoded["measured_consumed"] = result.measured_consumed
         return ReceiptResult(
             rstatus_name=decoded["rstatus_name"], fields=decoded,
             confirmed_round=result.confirmed_round, tx_ids=result.tx_ids,
@@ -503,6 +518,94 @@ class EthAvmClient:
         decoded = m7.decode_against_anchor(result.logs[-1])
         decoded["confirmed_round"] = result.confirmed_round
         decoded["probe_app_id"] = probe_id
+        decoded["measured_consumed"] = result.measured_consumed
+        return ReceiptResult(
+            rstatus_name=decoded["rstatus_name"], fields=decoded,
+            confirmed_round=result.confirmed_round, tx_ids=result.tx_ids,
+        )
+
+    def _submit_t2_receipt_against_anchor(self, receipts_root: bytes, tx_index: int, log_index: int,
+                                           nodes: list[bytes], el_block_number: int) -> ReceiptResult:
+        """014 §4.4's group layout, closing the T2-against-anchor
+        `TierUnsupported` gap: `[DonorIssuer, PaymentTxn(conditional),
+        attest, MODE_INIT(+MODE_NEXT), MODE_STAGE_OPEN, MODE_STAGE_WRITE...,
+        MODE_STAGE_WALK, MODE_AGAINST_ANCHOR]`, ALL nine app calls plus the
+        donor and the payment in ONE atomic group (§14 item 2: MUST NOT
+        split), driven against the PERMANENT `Mpt7AnchoredReceiptApp`
+        (`self.config.m7_anchored_app_id`, §14 item 3: MUST NOT
+        compile-and-deploy per call) rather than a freshly compiled probe.
+
+        `group_offset=3`: donor(0) + payment(1) + attest(2) precede the
+        walk calls, matching §4.4's table exactly -- `anchor_gi` is
+        therefore always 2 in this layout, and `prev_gi` for
+        MODE_AGAINST_ANCHOR is the walk's own last (STAGE_WALK) absolute
+        index, `3 + len(calls) - 1`."""
+        signer = self._signer()
+        ring_n = self._m8_ring_n()
+        anchored_app_id = self.config.m7_anchored_app_id
+        app_address = logic.get_application_address(anchored_app_id)
+        leaf_len = len(nodes[-1])
+
+        box_name = m7.derive_t2_box_name(el_block_number)
+        GROUP_OFFSET = 3  # donor(0) + payment(1) + attest(2)
+        _tier, calls, box_name, _static_fund_amount = m7.plan_receipt_calls_t2(
+            receipts_root, tx_index, log_index, nodes, box_name, group_offset=GROUP_OFFSET
+        )
+        prev_gi = GROUP_OFFSET + len(calls) - 1  # MODE_STAGE_WALK's own absolute group index
+        anchor_gi = GROUP_OFFSET - 1  # attest's own absolute group index, fixed by this layout
+        check_args = m7.build_against_anchor_check_args(prev_gi, anchor_gi, el_block_number, tx_index, log_index)
+
+        def build_group(n_donors: int):
+            atc = AtomicTransactionComposer()
+            atc.add_transaction(donor_transaction_with_signer(
+                self.algod, self._sender, self._sk, self.config.donor_issuer_id, self.config.donor_callee_id, n_donors
+            ))
+            sp_pay = self.algod.suggested_params()
+            pay_amount = self._t2_payment_amount(app_address, leaf_len)
+            pay_txn = transaction.PaymentTxn(self._sender, sp_pay, app_address, pay_amount)
+            atc.add_transaction(TransactionWithSigner(pay_txn, signer))
+            sp1 = self.algod.suggested_params()
+            sp1.flat_fee = True
+            sp1.fee = 1000
+            atc.add_method_call(
+                app_id=self.config.m8_app_id, method=m8.METHODS["attest"], sender=self._sender, sp=sp1,
+                signer=signer, method_args=[el_block_number],
+                boxes=m8.auto_boxes_for("attest", el_block_number, ring_n),
+            )
+            for call in calls:
+                sp = self.algod.suggested_params()
+                sp.flat_fee = True
+                sp.fee = 1000
+                kwargs = {}
+                if call.boxes:
+                    kwargs["boxes"] = [transaction.BoxReference(0, b) for b in call.boxes]
+                txn = transaction.ApplicationCallTxn(
+                    sender=self._sender, sp=sp, index=anchored_app_id,
+                    on_complete=transaction.OnComplete.NoOpOC, app_args=call.args, **kwargs,
+                )
+                atc.add_transaction(TransactionWithSigner(txn, signer))
+            check_txn = transaction.ApplicationCallTxn(
+                sender=self._sender, sp=self.algod.suggested_params(), index=anchored_app_id,
+                on_complete=transaction.OnComplete.NoOpOC, app_args=check_args,
+            )
+            check_txn.fee = 1000
+            check_txn.flat_fee = True
+            atc.add_transaction(TransactionWithSigner(check_txn, signer))
+            return atc
+
+        n_calls = 1 + len(calls) + 1  # attest + walk/stage calls + the check call
+        n_total_txns = 2 + n_calls  # donor + payment + every app call
+        if n_total_txns > 16:
+            raise ValueError(f"T2-against-anchor group needs {n_total_txns} transactions, over the 16-txn group cap")
+
+        result = submit_run(self.algod, build_group, n_app_calls_in_group=n_calls, dry_run=False)
+        if not result.logs:
+            raise m7.M7Error("no log produced by the against-anchor check")
+        decoded = m7.decode_against_anchor(result.logs[-1])
+        decoded["confirmed_round"] = result.confirmed_round
+        decoded["anchored_app_id"] = anchored_app_id
+        decoded["n_transactions"] = n_total_txns
+        decoded["measured_consumed"] = result.measured_consumed
         return ReceiptResult(
             rstatus_name=decoded["rstatus_name"], fields=decoded,
             confirmed_round=result.confirmed_round, tx_ids=result.tx_ids,

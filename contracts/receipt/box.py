@@ -33,9 +33,21 @@ def mpt7_stage_open(name: Bytes, leaf_len: UInt64) -> None:
         (wrong tier for this mode -- a leaf this small belongs in T1's
         plain argument-delivered path, one this large is T3's problem, not
         T2's; §3.1's boundary, enforced here rather than left implicit)
+
+    014 §5.2: deletes any pre-existing box under `name` before creating.
+    MODE_STAGE_OPEN has no sender gate (correctly -- §7.1), and the box
+    name is only 8 bytes, so a name can be squatted at the wrong size by an
+    unrelated party (measured: `box size mismatch`, would otherwise hard-
+    fail every honest proof that later picks the same name). `box_delete`
+    on an absent box is a documented no-op, so this costs nothing on the
+    honest path and reclaims the squatter's MBR to the app account on the
+    dishonest one -- safe precisely because box contents are never trusted
+    (§3.4/TP-M7-4): whatever was in the squatted box is gone before this
+    proof's own `box_create` ever runs.
     """
     assert leaf_len >= UInt64(MIN_STAGED_LEAF), "L7"
     assert leaf_len <= UInt64(MAX_STAGED_LEAF), "L7"
+    _deleted = op.Box.delete(name)
     _created = op.Box.create(name, leaf_len)
 
 

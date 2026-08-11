@@ -12,7 +12,7 @@ from dataclasses import dataclass, field
 
 from deploy import inspect as inspect_mod
 from deploy.manifest import Manifest
-from deploy.plans import donors, m4, m6, m7, m8
+from deploy.plans import donors, m4, m6, m7, m7_anchored, m8
 
 # Real Algorand MainNet genesis hash (§6.4 item 3 / §17 item 14's mainnet
 # refusal check). Cited value, not derived -- this is a network identity
@@ -101,6 +101,17 @@ def apply(target, algod_client, sender: str, sk: str, *, yes: bool = False,
         m8.apply(algod_client, sender, sk, target, manifest, activation_epochs=activation_epochs)
         manifest.save()
 
+    m7a_cfg = target.contracts.get("m7_anchored")
+    if m7a_cfg and m7a_cfg.deploy:
+        # 014 §4.1/§14 item 3: unlike m7/m6 below, this contract's source
+        # ALWAYS carries the on_completion guard (contracts/receipt/
+        # anchored_app.py's own "L1" assert is not conditional on anything
+        # a target file can toggle), so there is no schema-derived
+        # "unrestricted" state to refuse here the way
+        # `inspect_mod.refuse_unrestricted_on_mainnet` guards m7/m6.
+        m7_anchored.apply(algod_client, sender, sk, target, manifest)
+        manifest.save()
+
     m7_cfg = target.contracts.get("m7")
     if m7_cfg and m7_cfg.deploy:
         from deploy.schema.generate import generate_m7
@@ -130,7 +141,7 @@ def verify(target, algod_client) -> dict[str, inspect_mod.VerifyResult]:
         raise FileNotFoundError(f"no manifest for genesis_id={target.network.genesis_id!r} -- nothing to verify")
 
     results = {}
-    for name in ("m4", "m6", "m7", "m8"):
+    for name in ("m4", "m6", "m7", "m7_anchored", "m8"):
         entry = manifest.apps.get(name)
         if entry is None:
             continue

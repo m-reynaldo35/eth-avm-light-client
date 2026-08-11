@@ -22,6 +22,7 @@ BE) || log_index(2, BE)`.
 """
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -107,6 +108,22 @@ def plan_receipt_calls(receipts_root: bytes, tx_index: int, log_index: int, node
     return "T1", calls
 
 
+def derive_t2_box_name(block_number: int) -> bytes:
+    """014 §5.2 mitigation 2: `b"t2" || block_number(4 BE) || nonce(2
+    random)` -- 8 bytes, the exact width `MODE_STAGE_OPEN`/`WRITE`/`WALK`
+    all assert. The OLD derivation (`b"t2" || tx_index(4) || log_index(2)`)
+    was fully deterministic from public block data, so an adversary could
+    pre-compute and squat any name before the relayer ever built its group
+    (measured: `box size mismatch 2000 4094`, §5.2). A block component
+    alone would still be guessable (the relayer's own target block is
+    public); the random nonce is what makes the name unpredictable ahead of
+    the group's own construction, so squatting requires guessing 16 random
+    bits per attempt rather than being free. Paired with `box.py`'s
+    delete-before-create fix, a squat costs the attacker MBR and buys them
+    nothing even when it lands."""
+    return b"t2" + block_number.to_bytes(4, "big") + os.urandom(2)
+
+
 def plan_receipt_calls_t2(receipts_root: bytes, tx_index: int, log_index: int, nodes: list[bytes],
                            box_name: bytes, *, group_offset: int = 0) -> tuple[str, list[RawCall], bytes, int]:
     """T2: branch nodes as plain args (MODE_INIT [+ MODE_NEXT]), then
@@ -152,6 +169,21 @@ def plan_receipt_calls_t2(receipts_root: bytes, tx_index: int, log_index: int, n
         boxes=[box_name], produces_log=True,
     ))
     return "T2", calls, box_name, fund_amount
+
+
+def t2_box_mbr_requirement(leaf_len: int) -> int:
+    """014 §3.6/§5.3: the real app-account balance floor once a T2 box of
+    `leaf_len` bytes and the ordinary 100,000 uALGO account minimum are
+    both accounted for -- `2,500 + 400 * (8 + leaf_len) + 100,000`, §3.6's
+    own measured formula. The caller (`EthAvmClient`) reads the app
+    account's REAL balance via `account_info` and pays only the shortfall
+    against this figure (§5.3's fix), instead of unconditionally paying it
+    in full on every call regardless of whether a prior call's float
+    already covers it (§3.6's measured finding: three consecutive T2
+    proofs against the same app left 5.53 ALGO stranded in the app
+    account, all of it recoverable float that a conditional payment would
+    have skipped paying twice)."""
+    return 2500 + 400 * (8 + leaf_len) + 100_000
 
 
 def decode_r(log_bytes: bytes) -> dict:
