@@ -9,11 +9,113 @@ is exactly the class of claim `ARCHITECTURE.md`'s standing rule forbids.
 
 ## [Unreleased]
 
-No tag has been cut yet. Two of the release-readiness checklist's nine
-blocking rows remain open and need a human action — see
-[`docs/release.md`](./docs/release.md) for the full table: opening one real
-pull request against this repository, and a funded testnet
-deploy-verify-drive (G2-M12, projected ≈24–32 ALGO of test tokens).
+Nothing yet.
+
+## [1.0.0] - 2026-08-11
+
+All nine of the release-readiness checklist's originally-blocking rows are
+closed (full citation trail: [`docs/release.md`](./docs/release.md)). The
+last one closed the same day the tag was cut: a real mainnet
+deploy-verify-drive, twice over — 013's fork-table-to-global-state redesign
+(`SyncCommitteeVerifier`/`TrustedRootAnchor`/`Mpt6ComposerApp`, real end-to-
+end receipt proof, commit `ee9ef6c`) and 014's T2-against-anchor capability
+(`Mpt7AnchoredReceiptApp` plus a redeployed `Mpt7ReceiptApp`, real
+end-to-end T2 receipt proof through the live, real-USDC-paid production
+service, commits `b7dafdb`/`871f07d`). `ci-offline` run
+[31491458151](https://github.com/m-reynaldo35/eth-avm-light-client/actions/runs/31491458151)
+(3m46s, the push after every commit below) and `ci-live` run
+[31493546100](https://github.com/m-reynaldo35/eth-avm-light-client/actions/runs/31493546100)
+(triggered for this release specifically) are both cited as this release's
+evidence: `ci-live` — **green**, `live` tier 643 passed/1 skipped/2
+deselected in 967.7s (0:16:07), `contracts-live` green.
+
+**Real mainnet apps as of this tag** (`deploy verify --target
+deploy/targets/mainnet.json` → every app `OK`):
+
+| app | id | note |
+|---|---|---|
+| `SyncCommitteeVerifier` (m4) | `3670310452` | 013's fork table, real committee installed and finalized |
+| `Mpt6ComposerApp` (m6) | `3670312896` | |
+| `Mpt7ReceiptApp` (m7) | `3670577356` | redeployed 2026-08-11; the original `3665914633` is abandoned in place, not deleted (see `docs/security.md`) |
+| `Mpt7AnchoredReceiptApp` (m7_anchored) | `3670553866` | new, 014 |
+| `TrustedRootAnchor` (m8) | `3670310865` | |
+| `DonorIssuer` | `3666047636` | |
+| `DonorCallee` | `3666047587` | |
+
+**Requires-python / CI matrix**: `>=3.12` (`pyproject.toml`); `ci-offline`
+runs 3.12 and 3.13; `ci-live` runs 3.13 only.
+
+### Added (013 / 014, 2026-08-10 – 2026-08-11)
+
+- `docs/design/013-fork-table-global-state.md` — M4/M8's fork table moved
+  from box storage to global state, structurally eliminating the mainnet
+  create-race that previously cost two real, non-recoverable losses of
+  ~0.335 ALGO each. Implemented, and proven live the same session: a real
+  512-member committee installed, finalized, and a full receipt proved
+  end-to-end against a real anchor (`ee9ef6c`, ~22.5 ALGO real cost).
+- `docs/design/014-t2-against-anchor.md` — T2 (box-staged) receipt proofs
+  against an M8 anchor. A design pass that built and submitted a real
+  prototype rather than just reasoning about it: one atomic 10-transaction
+  group, zero donor transactions needed at the worst case. Implemented as
+  `contracts/receipt/anchored_app.py::Mpt7AnchoredReceiptApp` — T1 walk, T2
+  box-staged walk, and the M8 anchor check as one permanent, manifest-
+  pinned app, replacing the test-only, compiled-per-call `AnchorReceiptProbe`
+  for this path. Deployed to real mainnet (`3670553866`) and proven with a
+  real T2-tier receipt (block `25731394`, tx index `12`, 2,362 B leaf, a
+  real USDC Transfer event): `R_INCLUDED`, confirmed round `63965073`.
+- `/verify-receipt-trustless` — a second, explicit route on the live x402
+  service (`service/x402_endpoint/main.py`) offering the anchor-verified
+  path (zero RPC trust, T1-only, 93.7% coverage) alongside the unchanged
+  `/verify-receipt` (RPC-trusted, T1+T2, 97.5% coverage) — two trust models,
+  offered as a real choice rather than one silently swapping for the other.
+- `/keeper/run` — a Vercel Cron-triggered route that periodically runs
+  `sync(update=True)`/`anchor("latest")` with a dedicated, minimal-privilege
+  signer, guarded by Vercel's `CRON_SECRET` convention. Verified live
+  against production: a real `sync` (137 donors) + `anchor` (8 donors) tick,
+  both landed on mainnet.
+
+### Fixed (013 / 014, 2026-08-10 – 2026-08-11)
+
+- **A live, exploitable hijack window on the shipped T1 trustless path.**
+  `AnchorReceiptProbe` (`contracts/state_anchor/bench_app.py`) had no
+  `on_completion` guard — live-verified `UpdateApplication` with an
+  always-approve program was **accepted**. Since the relayer deploys a
+  fresh probe and submits the proof group as a separate transaction, this
+  was a real mainnet window in which anyone could substitute a fabricated
+  result for a real proof. Fixed with the standard one-line guard
+  (`bd3f2a7`), re-verified live (`UpdateApplication`/`DeleteApplication`
+  both rejected).
+- **Permissionless box-name squatting** (`contracts/receipt/box.py::
+  mpt7_stage_open`) — anyone could pre-create a T2 staging box at the wrong
+  size under a name the driver was about to use, breaking every honest
+  proof that picked it. Fixed (delete-before-create) in source and in a
+  fresh mainnet redeploy of `Mpt7ReceiptApp` (`3670577356`); the original
+  app (`3665914633`) could not be patched in place (its own `on_completion`
+  guard) and is abandoned, not deleted.
+- **The live Vercel deployment was serving `FUNCTION_INVOCATION_FAILED` on
+  every request** — `fastapi` was never actually installed. `pyproject.
+  toml`'s own comment had flagged this as an unmeasured question ("whether
+  Vercel's builder honours an EXTRA... must be settled by one real
+  redeploy"); it doesn't. Fixed with `vercel.json`'s `installCommand`
+  override; confirmed live via real, real-USDC-paid requests afterward.
+- `deploy/manifests/mainnet-v1.0.json` now correctly records
+  `Mpt7AnchoredReceiptApp` and the redeployed `Mpt7ReceiptApp` (see table
+  above) — a manifest write that was initially missed in the first commit
+  and caught/fixed the same session (`367a151`).
+- **014's negative-path tests** (design doc §10's A-6 through A-9 — a
+  forged M8 anchor, a corrupted staged chunk, an evicted ring entry, a
+  mismatched tx index) were not written by the implementation pass;
+  `TestNegativePaths014` (`tests/receipt/test_anchored_app_live.py`) closes
+  all four the same day, real and live against dev-mode algod, each
+  confirming both the rejection AND §3.5/§3.6's "fails closed, nothing
+  stranded" claim (box absent, app balance unchanged) by measurement, not
+  assumption. One real correction found while writing them: the design
+  doc's own `N12`/`W11`/`N2`/`L11` codes never appear as literal substrings
+  in algod's real rejection text (Puya's `assert cond, "CODE"` strings are
+  TEAL comments, stripped at runtime — matches `tests/state_anchor/
+  test_core.py::TestSecurityErrorCodes`'s own prior finding) — each test
+  matches the generic `"assert failed"` and proves it's the *right* assert
+  by construction instead.
 
 ### Added
 
@@ -158,3 +260,28 @@ deploy-verify-drive (G2-M12, projected ≈24–32 ALGO of test tokens).
   (that file itself unmodified, per this repo's own frozen-fixture policy).
   Not a release blocker — nothing this repository ships depends on
   AlgoPlonk.
+- **T1-against-anchor still compiles `AnchorReceiptProbe` fresh per call**
+  (`relayer/client.py::_deploy_anchor_receipt_probe`) rather than moving to
+  `Mpt7AnchoredReceiptApp`, the permanent contract 014 built for T2. Its
+  live hijack exposure is already closed by the `on_completion` guard
+  independent of deploy mechanism; this is a cost/latency question (~1.74
+  ALGO abandoned per T1 call, and a checkout-with-`puyapy` requirement the
+  packaged Vercel deployment cannot satisfy — confirmed live, this pass:
+  `/verify-receipt-trustless` on a T1 leaf returns a real, honest 500
+  citing `MissingContractsSource`), not a soundness one. Deferred, per 014
+  §4.1's own scope note.
+- The original mainnet `Mpt7ReceiptApp` (`3665914633`) is abandoned, not
+  deleted — still live and squattable in principle, no longer referenced by
+  any manifest, service config, or this project's own tooling. `deploy
+  resolve`/`deploy verify` correctly report the *current* app (`3670577356`)
+  `USABLE`/`OK`; nothing in this repository points at the old one any more.
+- `deploy verify` reports mainnet M4 with 366,100 µALGO of "unexpected
+  slack" — real, structural, and permanent (a bare `Contract` app account
+  has no withdrawal path), not a funding-calculation bug. Full root cause
+  in `docs/security.md`.
+- Scheduled `ci-live` runs failed for three consecutive days
+  (2026-08-09/10/11) before this release — the most recent two traced to a
+  test asserting mainnet M4/M8 were `NOT_DEPLOYED`, stale from before this
+  session's own real deployments of them; fixed same-day (`871f07d`). A
+  fresh `ci-live` run was triggered specifically for this release; see its
+  cited result above.

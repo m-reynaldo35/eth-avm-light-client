@@ -7,14 +7,16 @@ document. It is regenerated — the *table*, not the prose — at each release.
 ## The checklist
 
 Every "state" cell is measured, not asserted. **Nine rows originally
-blocked a `v1.0.0` tag; eight are now closed. One remains** (see "What this
-pass could not close," below).
+blocked a `v1.0.0` tag. All nine are now closed** (row 3 closed 2026-08-11
+by a real mainnet deploy, exceeding the testnet bar it originally asked
+for — see its own row and "What this pass could not close," below, for the
+full citation trail).
 
 | # | item | state (this pass) | blocks v1? |
 |---|---|---|---|
 | 1 | `ci-live.yml`'s real body has run and passed | **CLOSED.** Run [31229821639](https://github.com/m-reynaldo35/eth-avm-light-client/actions/runs/31229821639) — `live` 589 passed/1 skipped/2 deselected in 774.5s, `contracts-live` green. The first real, green `ci-live` run in this project's history. | no longer |
 | 2 | A `pull_request` event has run CI at least once | **CLOSED.** [PR #1](https://github.com/m-reynaldo35/eth-avm-light-client/pull/1), 3/3 jobs green ([31248827365](https://github.com/m-reynaldo35/eth-avm-light-client/actions/runs/31248827365)) — the first `pull_request`-triggered CI run in this project's history. Left open, unmerged (merging is a human approval step). | no longer |
-| 3 | A real testnet (or mainnet) deploy exists in an acceptance gate | **OPEN.** No public-network deploy has ever been performed; devnet-with-real-data is the strongest evidence so far. Needs funded testnet ALGO (≈24–32 ALGO) and 15–25 minutes. | **yes — human action, needs funding** |
+| 3 | A real testnet (or mainnet) deploy exists in an acceptance gate | **CLOSED, 2026-08-11 — real mainnet, exceeding the testnet bar this row originally asked for.** 013's fork-table-to-global-state redesign deployed M4/M6/M8 to real mainnet and proved a full receipt end-to-end (commit `ee9ef6c`: real app ids, `R_INCLUDED`, ~22.5 ALGO real cost). 014 then deployed `Mpt7AnchoredReceiptApp` (app `3670553866`) and a redeployed `Mpt7ReceiptApp` (app `3670577356`, closing the box-squatting gap `deploy resolve` had been reporting `CODE_MISMATCH` for) and proved a real T2-against-anchor receipt end-to-end through the live, real-USDC-paid `/verify-receipt-trustless` endpoint (commits `b7dafdb`/`871f07d`, `deploy verify` reports every app `OK`). **Caveat, not itself blocking**: every deploy this session used `governance == signer` (the disposable deployer key `RTG5QL...`), accepted only via `apply`'s own `--yes` override — `docs/operating.md`'s O-M10-3 already documents this is not appropriate for a network holding real value long-term; a multisig/hardware governance signer migration remains a separate, still-open human decision, unchanged by this row closing. | no longer |
 | 4 | A committed manifest for the live mainnet deployment | **CLOSED.** `deploy/manifests/mainnet-v1.0.json` records M7 + the donor pair, verified live against real mainnet with no signer (`deploy verify`, exit 0). | no longer |
 | 5 | `python -m relayer` works | **CLOSED.** `relayer/__main__.py` added; both `python -m relayer --help` and the `eth-avm-relayer` console script work from a clean-venv wheel install. | no longer |
 | 6 | `pip install eth-avm-relayer` does not pull forbidden service deps | **CLOSED.** Measured in a clean venv: 20 packages (was 59), all four real runtime deps plus their real transitive closure. `fastapi`/`uvicorn`/`x402-avm` moved to a `service` extra. | no longer |
@@ -81,9 +83,15 @@ decision, not something a design doc or a release script should press.
 
 - **G1-M12 (real green `ci-live`)**: **closed** — run 31229821639, cited
   above.
-- **G2-M12 (real testnet deploy-verify-drive)**: **not performed.** It
-  needs funded testnet ALGO a human may want to provide and is explicitly
-  out of scope for this documentation/packaging pass — see `CHANGELOG.md`.
+- **G2-M12 (real testnet deploy-verify-drive)**: **CLOSED, 2026-08-11 —
+  superseded by a real mainnet deploy-verify-drive**, a strictly stronger
+  result than the testnet bar this gate originally asked for. 013 deployed
+  M4/M6/M8 and proved a full receipt end-to-end on real mainnet (`ee9ef6c`);
+  014 deployed `Mpt7AnchoredReceiptApp` and a redeployed `Mpt7ReceiptApp`
+  and proved a real T2-against-anchor receipt end-to-end through the live,
+  real-USDC-paid service (`b7dafdb`/`871f07d`). `deploy verify --target
+  deploy/targets/mainnet.json` reports every app `OK`. See row 3 above for
+  the full citation trail and the governance-key caveat.
 - **One real pull request**: **CLOSED.**
   [#1](https://github.com/m-reynaldo35/eth-avm-light-client/pull/1), a
   real, docs-only PR against this repository, ran real CI on a
@@ -104,7 +112,7 @@ decision, not something a design doc or a release script should press.
   a readable README, a tagged release process, and a verifiable on-chain
   artifact) — pressing submit has a deadline attached to somebody else's
   calendar and is a human's call.
-- **A `v1.0.0` git tag / GitHub release**: **not cut.** Two of the
-  checklist's blocking rows are still open (above), and cutting a tag with
-  known-blocking rows open would be exactly the kind of claim this whole
-  module exists to prevent.
+- **A `v1.0.0` git tag / GitHub release**: **cut, 2026-08-11**, human-
+  authorized, once all nine originally-blocking rows were genuinely
+  closed (above) — not before. `deploy verify` was re-run immediately
+  before tagging and reports every mainnet app `OK`.
