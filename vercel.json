@@ -4,5 +4,11 @@
     "service/x402_endpoint/main.py": {
       "maxDuration": 60
     }
-  }
+  },
+  "crons": [
+    {
+      "path": "/keeper/run",
+      "schedule": "0 0 * * *"
+    }
+  ]
 }
