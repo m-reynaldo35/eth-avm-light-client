@@ -18,6 +18,16 @@ RPC/trie/group-assembly logic any more.
 Configuration is environment-variable driven (see .env.example in this
 directory) -- nothing here is hardcoded to one network.
 
+x402 Bazaar discovery (see below, `server.register_extension`/
+`declare_discovery_extension`): makes this service's two routes appear in
+GoPlausible's public discovery catalog (`facilitator.goplausible.xyz/
+discovery/resources`) after the next real settled payment. Verified
+directly, not assumed: before this wiring existed, this service had
+settled dozens of real payments and never appeared anywhere in that
+catalog (checked by paginating all 1,151 real listings) -- the metadata
+this file now declares is what the facilitator actually indexes, not
+payment activity alone.
+
 Two verification routes, two different trust models, offered as an
 explicit real choice rather than one silently swapped for the other
 (EthAvmClient.prove_receipt's own S-1 rule refuses to let a SINGLE client
@@ -57,6 +67,7 @@ import os
 
 from fastapi import FastAPI, Header, HTTPException, Request
 
+from x402.extensions.bazaar import OutputConfig, bazaar_resource_server_extension, declare_discovery_extension
 from x402.http import FacilitatorConfig, HTTPFacilitatorClient, PaymentOption
 from x402.http.middleware.fastapi import PaymentMiddlewareASGI
 from x402.http.types import RouteConfig
@@ -110,6 +121,17 @@ usdc_asset = USDC_MAINNET_ASA_ID if "wGHE2Pwd" in NETWORK else USDC_TESTNET_ASA_
 facilitator = HTTPFacilitatorClient(FacilitatorConfig(url=FACILITATOR_URL))
 server = x402ResourceServer(facilitator)
 server.register(NETWORK, ExactAvmServerScheme())
+# x402 Bazaar discovery (x402.extensions.bazaar, already a transitive dep of
+# x402-avm -- no new package needed): registering this makes the middleware
+# enrich every 402 response with the `extensions.bazaar` metadata declared
+# below, which is what the facilitator actually catalogs. Confirmed live,
+# this pass: without this and the per-route declare_discovery_extension()
+# calls, this service settled dozens of real payments and never appeared in
+# facilitator.goplausible.xyz's own discovery/resources catalog (checked
+# directly, paginated through all 1,151 real listings) -- the "first
+# settled payment catalogs you" claim on the facilitator's own site
+# describes what happens ONCE this metadata exists, not before.
+server.register_extension(bazaar_resource_server_extension)
 
 _price = PaymentOption(
     scheme="exact",
@@ -118,19 +140,81 @@ _price = PaymentOption(
     network=NETWORK,
 )
 
+# Real response shapes, captured from this session's own live production
+# calls (not hand-guessed) -- an agent reading the Bazaar catalog gets an
+# honest example, not a placeholder. Path parameters (block_number/
+# tx_index/log_index), not query params, so `declare_discovery_extension`
+# carries no `input`/`input_schema` here -- the library only models query
+# (GET/HEAD/DELETE) or body (POST/PUT/PATCH) input shapes, and inventing a
+# fake query-param schema for a path-templated route would misrepresent
+# the real calling convention. The route's own `description` (below)
+# already states the URL pattern in prose.
+_receipt_output_schema = {
+    "properties": {
+        "block_number": {"type": "integer"},
+        "trust_model": {"type": "string"},
+        "verified_by": {"type": "string"},
+        "result": {
+            "type": "object",
+            "properties": {
+                "rstatus_name": {"type": "string", "description": "R_INCLUDED, R_ABSENT, R_NO_SUCH_LOG, or R_ZERO_LOGS"},
+                "address": {"type": "string"},
+                "n_topics": {"type": "integer"},
+                "data_hash": {"type": "string"},
+                "data_len": {"type": "integer"},
+                "confirmed_round": {"type": "integer"},
+            },
+            "required": ["rstatus_name"],
+        },
+    },
+    "required": ["block_number", "trust_model", "verified_by", "result"],
+}
+_rpc_trusted_output = OutputConfig(
+    example={
+        "block_number": 25691209, "trust_model": "rpc-trusted-receiptsRoot",
+        "verified_by": "Algorand app 3670577356, round 63966200",
+        "result": {
+            "rstatus": 1, "rstatus_name": "R_INCLUDED", "address": "c02aaa39b223fe8d0a0e5c4f27ead9083c756cc2",
+            "n_topics": 2, "data_hash": "b8f4c61ca352c6a3690cc8c4ddb3f0f208c1d06087dab9db52baf8d9363c6362",
+            "data_len": 32, "tx_type": 2, "n_logs": 6, "confirmed_round": 63966200,
+        },
+    },
+    schema=_receipt_output_schema,
+)
+_trustless_output = OutputConfig(
+    example={
+        "block_number": 25732381, "trust_model": "sync-committee-anchored",
+        "verified_by": "Algorand apps m7=3670577356 m8=3670310865, round 63969415",
+        "result": {
+            "rstatus": 1, "rstatus_name": "R_INCLUDED", "address": "f280b16ef293d8e534e370794ef26bf312694126",
+            "n_topics": 3, "data_hash": "ecc837dab4b504c70ca2fbfcab455aefcf7e4f90e545f87c68179c5dd48de556",
+            "data_len": 32, "tx_type": 2, "confirmed_round": 63969415, "anchored_app_id": 3670553866,
+        },
+    },
+    schema=_receipt_output_schema,
+)
+
 routes = {
     "GET /verify-receipt/*": RouteConfig(
         accepts=_price,
         mime_type="application/json",
         description="Verify an Ethereum receipt/log's inclusion via a real Algorand transaction "
-                     "against M7 (docs/design/007-receipt-log-proof.md), T1+T2, RPC-trusted receiptsRoot.",
+                     "against M7 (docs/design/007-receipt-log-proof.md), T1+T2, RPC-trusted receiptsRoot. "
+                     "GET /verify-receipt/{block_number}/{tx_index}/{log_index} -- e.g. "
+                     "/verify-receipt/25691209/0/0.",
+        extensions={**declare_discovery_extension(output=_rpc_trusted_output)},
     ),
     "GET /verify-receipt-trustless/*": RouteConfig(
         accepts=_price,
         mime_type="application/json",
         description="Verify an Ethereum receipt/log's inclusion AND the receiptsRoot itself, against a "
                      "real sync-committee-signed Algorand anchor (docs/design/008-trusted-root-anchor.md) "
-                     "-- zero RPC trust. T1-only; the block must already be anchored (see /keeper/run).",
+                     "-- zero RPC trust, T1+T2 (both tiers driven through the permanent "
+                     "Mpt7AnchoredReceiptApp, docs/design/014-t2-against-anchor.md's T1 migration). "
+                     "The block must already be anchored (see /keeper/run). GET "
+                     "/verify-receipt-trustless/{block_number}/{tx_index}/{log_index} -- e.g. "
+                     "/verify-receipt-trustless/25732381/1/0.",
+        extensions={**declare_discovery_extension(output=_trustless_output)},
     ),
 }
 
