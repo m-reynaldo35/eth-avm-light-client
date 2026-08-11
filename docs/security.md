@@ -116,8 +116,8 @@ bypassing every other check in the chain (BLS, SSZ, the keccak hash chain,
 itself is not the one you audited). Fixed with the standard one-line guard;
 re-verified live (`UpdateApplication`/`DeleteApplication` both rejected).
 
-**`mpt7_stage_open` had no box-name squatting protection (fixed in
-source; the deployed mainnet `Mpt7ReceiptApp` is NOT yet fixed).**
+**`mpt7_stage_open` had no box-name squatting protection (fixed
+everywhere, `2026-08-11`).**
 `contracts/receipt/box.py::mpt7_stage_open` called `op.Box.create` without
 first deleting any pre-existing box under the same (permissionless, by
 design — see [014 §7.1](design/014-t2-against-anchor.md)) name. Since
@@ -127,17 +127,15 @@ honest T2 proof that picked it. Fixed (delete-before-create) in this
 repo's source tree, and the off-chain box-name derivation
 (`relayer/drivers/m7_receipt.py::derive_t2_box_name`) now adds a block
 component and a random nonce so a name can no longer be pre-computed
-either. **This finding applies to the live mainnet `Mpt7ReceiptApp` app
-(`3665914633`) too** — and that app's OWN `on_completion` guard (the fix
-above, applied everywhere on the same day) makes it permanently
-un-updatable in place, so the fix cannot reach it without a fresh deploy.
-Until a human runs one, the live mainnet app remains squattable in
-principle (the design doc's own severity note: expensive and self-limiting
-for the squatter under the single-atomic-group rule, not free or
-repeatable, but real). `deploy resolve`/`deploy verify` against mainnet
-correctly report this app `CODE_MISMATCH`, not `USABLE`, reflecting the
-real drift between source and what is live — this is the tooling working
-as designed (see the section above), not a bug in the tooling.
+either. The original live mainnet `Mpt7ReceiptApp` (`3665914633`) could not
+receive this fix in place — its own `on_completion` guard (the fix above,
+applied everywhere the same day) makes it permanently un-updatable — so a
+fresh app was deployed instead: **`3670577356`**, compiled from this fixed
+source, `deploy verify` reports `OK`. The old app `3665914633` is
+abandoned (still live on-chain, still squattable in principle, but no
+longer referenced by any manifest, service config, or this project's own
+tooling) rather than deleted, since a bare `Contract` has no delete-and-
+recover path for its retained MBR.
 
 ## Packaged wheel vs. checkout
 
