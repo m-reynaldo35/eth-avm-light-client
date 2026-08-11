@@ -35,13 +35,12 @@ full citation trail).
 | 19 | Bare-contract `code_id`s unfillable offline | **CLOSED.** All seven contracts (including `MptSegmentApp`, `DonorIssuer`, `DonorCallee`) now have a `code_id` in `deploy/versions.json`, filled by running `deploy.compile.refresh_bare_contract_cache` against a real, reachable algod. | no longer |
 | 20 | MBR is not recoverable | Structural; stated in bold in `docs/operating.md` | no — documented, not a defect |
 
-**As of this pass: eight of the nine originally-blocking rows are closed.
-One remains, and it needs a real-world action nothing short of a human can
-perform**: the funded testnet deploy-verify-drive (G2-M12) needs real
-testnet ALGO from a faucet that requires an interactive login (the AlgoKit
-dispenser) or a browser captcha (the classic bank faucet) — neither is
-scriptable without a human completing the login/captcha step once. See
-`CHANGELOG.md`'s "Unreleased" section.
+**As of the `v1.0.0` tag: all nine originally-blocking rows are closed.**
+Row 3 (G2-M12, "a real testnet-or-mainnet deploy exists in an acceptance
+gate") was the last to close, superseded by a real mainnet
+deploy-verify-drive that exceeds the testnet bar it originally asked for
+— see row 3 above and `CHANGELOG.md`'s `[1.0.0]` entry for the full
+citation trail.
 
 ## The release notes' required contents (cite, don't assert)
 
