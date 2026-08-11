@@ -846,7 +846,7 @@ dev-mode algod, and passed. A-14 is the one that has not.
 | **G7-014** | Every cost claim traces to a real `app-budget-consumed` and a real fee total, and `measured_consumed` is persisted into `ReceiptResult.fields` so it never has to be re-measured by hand | §6, `ARCHITECTURE.md`'s standing rule |
 | **G8-014** | `deploy verify` reports the new app `USABLE` with a hash-matched approval program on the target network | A-1 + `deploy verify` |
 | **G9-014** | The pre-existing M7 and M8 live suites pass unchanged, and the T1 against-anchor path still works after §5.1's guard lands | full live re-run |
-| **G10-014** | A real mainnet T2 receipt is proven end to end | A-14. **The headline gate** |
+| **G10-014** | A real mainnet T2 receipt is proven end to end | A-14. **The headline gate.** **CLOSED, 2026-08-11**: `Mpt7AnchoredReceiptApp` deployed to real mainnet (app `3670553866`, bound to real M8 app `3670310865`, `deploy verify` reports `OK`). A real T2-tier receipt (block `25731394`, tx index `12`, `2,362` B leaf, a real USDC Transfer event) proved against a real on-chain M8 anchor in one atomic 9-transaction group: `R_INCLUDED`, confirmed round `63965073`, measured consumed `4,512`. Along the way, hit and root-caused a real staleness gap — `anchor_direct` failed deterministically (not intermittently) because M4's on-chain finalized checkpoint had fallen behind real current beacon finality; `sync(update=True)` before `anchor("latest")` resolved it, confirming the operational need for `/keeper/run` rather than exposing a defect in this design. `Mpt7ReceiptApp` itself remains un-redeployed; see `docs/security.md` and `ROADMAP.md`'s M13 row. |
 
 ---
 
