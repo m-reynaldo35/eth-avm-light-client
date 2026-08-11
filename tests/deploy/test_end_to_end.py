@@ -71,6 +71,12 @@ def test_e1_g1_m10_manifest_driven_deploy_feeds_m9_end_to_end(tmp_path, monkeypa
         contracts={
             "m4": ContractTarget(deploy=True, genesis_validators_root="0x" + GENESIS_VALIDATORS_ROOT_HEX),
             "m8": ContractTarget(deploy=True, ring_n=8),
+            # 014 §4.1's deferred T1 migration, closed this pass:
+            # `prove_receipt(against_anchor=True)` now needs
+            # `m7_anchored_app_id` for T1 too, not just T2 -- `deploy.diff.
+            # apply` orders this after m8 (its own compile-time
+            # ANCHOR_APP_ID dependency, TP-M8-4) and before m7 below.
+            "m7_anchored": ContractTarget(deploy=True, t2_float=True),
             "m7": ContractTarget(deploy=True, t2_float=True),
             "m6": ContractTarget(deploy=True),
         },
@@ -89,6 +95,7 @@ def test_e1_g1_m10_manifest_driven_deploy_feeds_m9_end_to_end(tmp_path, monkeypa
         m4_app_id=manifest.apps["m4"]["app_id"],
         m7_app_id=manifest.apps["m7"]["app_id"],
         m8_app_id=manifest.apps["m8"]["app_id"],
+        m7_anchored_app_id=manifest.apps["m7_anchored"]["app_id"],
         donor_issuer_id=manifest.apps["donor_issuer"]["app_id"],
         donor_callee_id=manifest.apps["donor_callee"]["app_id"],
         signer_mnemonic=mnemonic.from_private_key(sk),
@@ -110,14 +117,16 @@ def test_e1_g1_m10_manifest_driven_deploy_feeds_m9_end_to_end(tmp_path, monkeypa
     anchored_block = anchor_result.record["el_block_number"]
 
     # FIXED (real bug found live): this used to hardcode tx_index=0,
-    # log_index=0. `prove_receipt(against_anchor=True)` only supports T1
-    # (raw-arg) leaves -- `AnchorReceiptProbe` doesn't implement the T2
-    # box-staged path (§9.2's own scope) -- so a real block whose tx 0
-    # happens to need T2 made this test fail with TierUnsupported, not a
-    # real regression. Mirrors tests/state_anchor/test_live_historical.py's
-    # own dynamic-selection discipline: scan the real, currently-anchored
-    # block's own receipts for a transaction that both classifies as T1
-    # and has at least one real log, instead of assuming index 0 qualifies.
+    # log_index=0, which fails whenever tx 0's own leaf happens to need T3
+    # (ZK, out of v1 scope). `Mpt7AnchoredReceiptApp` implements BOTH T1
+    # (raw-arg) and T2 (box-staged) against-anchor walks (014 §4.1's
+    # deferred T1 migration is closed as of this pass -- the old
+    # `AnchorReceiptProbe`-based restriction to T1-only no longer applies),
+    # so this only needs to avoid T3, not pick T1 specifically. Mirrors
+    # tests/state_anchor/test_live_historical.py's own dynamic-selection
+    # discipline: scan the real, currently-anchored block's own receipts
+    # for a transaction with at least one real log whose leaf classifies as
+    # T1 or T2, instead of assuming index 0 qualifies.
     from relayer.proofs import classify as classify_mod
     from relayer.proofs.receipts_trie import build_receipts_trie_and_path
     from relayer.sources.eth_rpc import get_block_receipts
@@ -132,13 +141,12 @@ def test_e1_g1_m10_manifest_driven_deploy_feeds_m9_end_to_end(tmp_path, monkeypa
             _root, nodes = build_receipts_trie_and_path(receipts, idx)
         except KeyError:
             continue
-        if classify_mod.classify(nodes[-1]).tier == "T1":
+        if classify_mod.classify(nodes[-1]).tier in ("T1", "T2"):
             tx_index, log_index = idx, 0
             break
     assert tx_index is not None, (
-        f"no transaction in real EL block {anchored_block} has a real log and a T1-sized "
-        "receipt leaf -- would need the T2 box-staging path AnchorReceiptProbe intentionally "
-        "does not implement (§9.2 scope)"
+        f"no transaction in real EL block {anchored_block} has a real log and a T1/T2-sized "
+        "receipt leaf (only T3/ZK leaves, out of v1 scope, §1.2)"
     )
 
     receipt_result = client.prove_receipt(int(anchored_block), tx_index, log_index, against_anchor=True)

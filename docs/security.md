@@ -84,16 +84,34 @@ directly through any other client bypasses this refusal entirely. Closing
 that gap needs a chain-side gindex/depth bound, which is a contract change
 and is out of scope for this release (`O-M12-1`).
 
-## Nothing is monitored
+## What is, and is not, monitored
 
-Stated plainly, once, so it does not need restating elsewhere: **no
-automated system watches the live mainnet app, the live Vercel service at
-`https://x402endpoint-nu.vercel.app`, or `TrustedRootAnchor`'s equivocation
-latch (`conflict != 0`, which 009 §8.5 classifies `PAGE_A_HUMAN`).** There
-is no health check, no alerting, no uptime target, and no owner on call.
-This is why Bazaar discovery registration was declined for this release
-(a directory listing is a stronger availability claim than this project
-can currently back) — see `CHANGELOG.md`.
+**Closed, 2026-08-11**: `.github/workflows/monitor.yml` polls, every 30
+minutes, `GET https://x402endpoint-nu.vercel.app/health` (checked for a
+200 and the six real keys `service/x402_endpoint/main.py`'s handler
+returns) and `deploy verify --target deploy/targets/mainnet.json` (checked
+for every app reporting usable). The check logic lives in
+`scripts/monitor_check.py`, kept out of the workflow YAML specifically so
+its failure branch is unit-tested offline
+(`tests/harness/test_monitor_check.py`, 12 tests, no network) rather than
+only ever exercised by a real outage. On a genuine failure the workflow
+itself goes red (visible on the Actions tab) and files or updates a real
+GitHub issue via `gh issue create`/`gh issue edit` using the workflow's own
+`GITHUB_TOKEN` — no new secret, no third-party service (this project's own
+G8-M9 import-purity test forbids the sentry-sdk/Datadog class of
+dependency a naive monitor reaches for). It closes that issue automatically
+on the next green run.
+
+**Still not monitored: `TrustedRootAnchor`'s equivocation latch**
+(`conflict != 0`, which 009 §8.5 classifies `PAGE_A_HUMAN`). `deploy
+verify` does not read on-chain global state for this condition today, so
+it is outside this workflow's scope — a genuine gap, not an oversight, and
+a candidate for a follow-up pass rather than silently folded into this one.
+There is still no uptime *target* (SLO) and no on-call rotation; this is a
+scheduled check with an issue-based alert, not an incident-response
+program. This is why Bazaar discovery registration remains declined for
+this release (a directory listing is a stronger availability claim than a
+30-minute-cadence health check backs) — see `CHANGELOG.md`.
 
 ## Known live findings (014): one fixed everywhere, one fixed in source only
 

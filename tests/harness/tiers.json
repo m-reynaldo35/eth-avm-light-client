@@ -75,6 +75,11 @@
       "needs_network": 4,
       "offline": 2
     },
+    "tests/harness/test_monitor_check.py": {
+      "needs_algod": 0,
+      "needs_network": 0,
+      "offline": 12
+    },
     "tests/harness/test_packaging.py": {
       "needs_algod": 0,
       "needs_network": 2,
@@ -108,6 +113,11 @@
     "tests/relayer/test_live_relayer.py": {
       "needs_algod": 8,
       "needs_network": 8,
+      "offline": 0
+    },
+    "tests/relayer/test_m6_live.py": {
+      "needs_algod": 2,
+      "needs_network": 0,
       "offline": 0
     },
     "tests/relayer/test_plan_boxes.py": {
@@ -151,7 +161,7 @@
       "offline": 29
     },
     "tests/state_anchor/test_core.py": {
-      "needs_algod": 14,
+      "needs_algod": 26,
       "needs_network": 0,
       "offline": 0
     },
@@ -309,9 +319,9 @@
   },
   "generated_by": "pytest --write-tier-manifest",
   "totals": {
-    "collected": 650,
-    "live": 113,
+    "collected": 676,
+    "live": 127,
     "live_heavy": 2,
-    "offline": 535
+    "offline": 547
   }
 }

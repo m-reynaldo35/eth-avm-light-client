@@ -208,12 +208,21 @@ def test_n6_cited_mainnet_app_ids_appear_in_the_committed_manifest():
 
 
 # ---------------------------------------------------------------------------
-# N-7 (G4-M9 open, §7 row 13): account/storage proofs are qualified.
+# N-7 (G4-M9 closed, 2026-08-11, §7 row 13): account/storage proofs have a
+# real submitting client -- README must claim this, not the old "no
+# submitting client" limitation, and the claim must be backed by a real
+# test file (not just prose).
 # ---------------------------------------------------------------------------
-def test_n7_account_storage_proofs_are_qualified_in_readme():
+def test_n7_account_storage_proofs_have_a_real_submitting_client():
     text = _text(README)
-    assert "G4-M9" in text
-    assert "never sends a transaction" in text or "no submitting client" in text
+    assert "no submitting client" not in text and "never sends a transaction" not in text, (
+        "G4-M9 is closed (relayer/client.py::prove_account submits a real group) -- "
+        "README must not still claim otherwise"
+    )
+    assert "prove_account" in text, "README should cite the real submitting client by name"
+    assert (REPO_ROOT / "tests" / "relayer" / "test_m6_live.py").exists(), (
+        "G4-M9's own real, live test file is missing"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -233,6 +242,11 @@ ALLOWLIST = {
     "008": "docs/design/008-trusted-root-anchor.md",
     "010": "docs/design/010-deployment-tooling.md",
     "007": "docs/design/007-receipt-log-proof.md",
+    "013": "docs/design/013-fork-table-global-state.md",
+    "014": "docs/design/014-t2-against-anchor.md",
+    "366100": "docs/security.md -- M4's real, measured 366,100 microALGO install-vs-steady-state slack",
+    "2026": "the real calendar year every dated event in this table actually happened in",
+    "643": "ci-live run 31493546100 -- live tier, 643 passed/1 skipped/2 deselected",
     "300": "tests/fixtures/spike-reference/coverage_sample_300blocks.json (block_range span)",
     "512": "008 §5.3 -- the sync-committee's real member count",
     "276": "005 §16 -- M5's G6 target, <3,276",

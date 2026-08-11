@@ -9,7 +9,124 @@ is exactly the class of claim `ARCHITECTURE.md`'s standing rule forbids.
 
 ## [Unreleased]
 
-Nothing yet.
+### Changed
+
+- **T1-against-anchor migrated off the per-call `AnchorReceiptProbe` deploy
+  onto the permanent `Mpt7AnchoredReceiptApp`** — 014 §4.1's own deliberately
+  deferred scope, closed. `relayer/client.py::_submit_receipt_against_anchor`
+  now drives `self.config.m7_anchored_app_id` (the same app
+  `_submit_t2_receipt_against_anchor` already used for T2), instead of
+  compiling `contracts/state_anchor/bench_app.py` with `puyapy` and creating
+  a fresh app on every call; `_deploy_anchor_receipt_probe` is deleted.
+  `prove_receipt(against_anchor=True)` now requires `m7_anchored_app_id` for
+  both T1 and T2. Real cost improvement, measured this pass (standalone
+  dev-mode live script, same synthetic-but-real harness `tests/receipt/
+  test_anchored_app_live.py` uses): the one-time `Mpt7AnchoredReceiptApp`
+  deploy took 3.27s wall-clock (funds its own 1.7441 ALGO box-MBR float
+  once); the proof call itself then took 0.04s with zero app-balance delta
+  (no MBR abandoned) — versus the old path's ~3.4s `puyapy` compile PLUS a
+  fresh app create, on EVERY call, abandoning that call's MBR permanently (a
+  bare `Contract` has no delete-and-recover path). A real 337 B T1 leaf
+  verified `R_INCLUDED` against a real on-chain M8 anchor through the
+  migrated path, `measured_consumed=3041`. Also closes the T1 case of the
+  live, confirmed `MissingContractsSource` gap: `/verify-receipt-trustless`
+  on a T1 leaf no longer needs `contracts/` source + `puyapy` on `PATH` at
+  request time, so the packaged Vercel deployment (which ships neither) can
+  now serve it — previously a real 500 on every T1 request.
+- `tests/relayer/test_live_relayer.py`'s `env_a_anchor` fixture and `tests/
+  deploy/test_end_to_end.py`'s E-1 now deploy/configure `m7_anchored_app_id`
+  via the real `deploy.plans.m7_anchored.apply` tooling (never hand-written)
+  instead of relying on the retired per-call probe deploy; L-4's own dynamic
+  tx-selection comment updated to stop citing `AnchorReceiptProbe`, which no
+  longer exists in this path. Both files collect cleanly (`pytest
+  --collect-only`); their own real-beacon-dependent 15-25-minute live runs
+  were not re-executed this pass (see `ROADMAP.md`'s M13 row).
+- `service/x402_endpoint/main.py`'s module docstring corrected: the
+  `/verify-receipt-trustless` route was already T1-only at 93.7% coverage
+  before this pass and is now T1+T2 at 97.5%, matching `/verify-receipt`'s
+  coverage under a trustless model instead of a narrower one. No code change
+  was needed here — `trustless_client`'s config already picked up
+  `M7_ANCHORED_APP_ID` via `RelayerConfig.from_env()` and never cleared it,
+  unlike `m8_app_id` on `receipts_client`.
+- **M6 (`Mpt6ComposerApp`) now has a real submitting client.**
+  `relayer/client.py::prove_account` builds and submits a real transaction
+  group (fetches the block header for `R_state`/TP-M6-1, then
+  `eth_getProof`, segments via `relayer/proofs/account.py`/
+  `relayer/drivers/m6_account_storage.py`, submits through the shared
+  `relayer.group.submit.run` loop) instead of never sending a transaction,
+  and enforces TP-M6-3 off-chain (`m6.verify_terminal_result`) before
+  trusting the result — the check that defeats a real substitution attack
+  (design doc §5.4): a relayer pointing an honestly-executed `MODE_B_INIT`
+  at the wrong phase-A segment in the same group, producing a
+  true-but-irrelevant composite about a different address/slot that no
+  on-chain check alone catches. Found and fixed a real, load-bearing bug
+  along the way: `resolve_prev_gi` located its `_PENDING_PREV_GI`
+  placeholder by scanning for a byte-value match, but `donor_count=0` (the
+  ordinary value on every non-donor-carrying segment) encodes to the
+  identical 8 zero bytes, false-positiving on `A_INIT` itself and crashing
+  every real call — fixed to locate the placeholder structurally instead.
+  `tests/relayer/test_m6_live.py` (new): two real, live submissions against
+  a freshly-deployed dev-mode `Mpt6ComposerApp` — the design doc's own
+  pinned USDT/Binance-8 `C_INCLUDED` case, and a single-transaction
+  `C_ABSENT_ACCOUNT` case with zero phase-B segments.
+- **11 of M8's 13 untested error codes now have real, live tests**
+  (`tests/state_anchor/test_core.py`: N1, N3, N7, N8, N10, N11, N16, N17,
+  N22, N23, N24) — each matches generically on `"assert failed"` and
+  proves it's the right assert by construction, never the code string
+  itself (Puya's `assert cond, "CODE"` strings are stripped TEAL comments,
+  never present in algod's real rejection text). The remaining 2 (N14,
+  N21) are proven genuinely unreachable rather than force-tested: N14
+  (`attest()`'s pinned-version check) can never see a version byte other
+  than `VERSION_1`, since the only pinned-box writer always copies an
+  already-N12-validated ring record; N21 (`RING_WRITE_REGRESSION`) is
+  algebraically excluded once N-ADMIT holds in the same call (a
+  same-residue collision needs a full `ring_n`-multiple gap N-ADMIT's own
+  bound rules out) — independently re-derived, not just repeating
+  `box.py`'s own docstring claim. `tests/harness/error_codes_uncovered.txt`:
+  13 → 2, with the reasoning for both remaining entries recorded inline.
+
+**`docs/security.md`'s "Nothing is monitored" is closed.** A new scheduled
+GitHub Actions workflow (`.github/workflows/monitor.yml`), not a
+third-party service — this repo's own G8-M9 import-purity test forbids the
+sentry-sdk/Datadog class of dependency a naive monitor reaches for — checks
+the live Vercel service and the real mainnet apps every 30 minutes and
+alerts via a real GitHub issue on genuine failure, using only the
+workflow's own `GITHUB_TOKEN` (no new secret). Check logic lives in
+`scripts/monitor_check.py`, stdlib-only (`urllib`, `subprocess`), kept out
+of the YAML specifically so its failure branch is unit-testable offline.
+
+- **Real live evidence, this pass**: `GET
+  https://x402endpoint-nu.vercel.app/health` →
+  `{"algod_round":63968372,"m7_app_id":3670577356,"m4_app_id":3670310452,"m8_app_id":3670310865,"trustless_configured":true,"keeper_configured":true}`
+  (200). `python3 -m deploy verify --target deploy/targets/mainnet.json` →
+  `m6`/`m7`/`m7_anchored`/`m8`: `OK`, `m4`: `FAIL` with only the documented,
+  expected "unexpected slack" finding (`docs/security.md`). `python3
+  scripts/monitor_check.py` correctly classifies that combination healthy
+  and exits 0 against both real checks in the same session.
+- **Failure path proven offline, not just the happy path**:
+  `tests/harness/test_monitor_check.py` (12 tests, no network, no algod) —
+  a genuine `CODE_MISMATCH`, an unreachable/failing non-M4 app, a
+  non-200/non-JSON/missing-key health response, and a subprocess exception
+  are all correctly reported unhealthy; the one case that must NOT page
+  anyone (M4's real, captured slack-only `deploy verify` output) is
+  correctly reported healthy. Also exercised live and harmlessly:
+  `check_health` against a real nonexistent path on the real production
+  host (404) and a real nonexistent hostname (DNS failure) both correctly
+  report unhealthy, without touching anything the production service
+  actually serves.
+- **Honest limitation**: this workflow had not, as of when it was written,
+  produced a real, live, scheduled/dispatched GitHub Actions run — it was
+  built in an isolated git worktree under a no-commit constraint, and
+  GitHub does not recognize a `workflow_dispatch`/`schedule` trigger for a
+  workflow file that has never been pushed. What was verified there is the
+  real check logic run directly against the real live service and real
+  live mainnet apps, plus its failure branches under real offline pytest.
+  The first real `workflow_dispatch`/scheduled run happens once this lands
+  on `main` — see `docs/release.md`/`ROADMAP.md` for its run id once one
+  exists.
+- `TrustedRootAnchor`'s equivocation latch (`conflict != 0`, 009 §8.5) is
+  explicitly NOT covered by this workflow — `deploy verify` does not read
+  that piece of on-chain state — see `docs/security.md`.
 
 ## [1.0.0] - 2026-08-11
 
@@ -238,13 +355,11 @@ runs 3.12 and 3.13; `ci-live` runs 3.13 only.
   opcode 3-node receipt walk (target < 1,121), 1,969 B (target ≤ 1,400 B).
 - M2's G1/G3 gates are open (192 vs. a ≤90 target; G1 is index-dependent by
   design).
-- M6 (`Mpt6ComposerApp`) has no submitting client — `prove_account` never
-  sends a transaction.
-- 13 of M8's 22 error codes are untested (tracked in
-  `tests/harness/error_codes_uncovered.txt`; growth is a red build).
 - T3 (the ZK tier) is unimplemented; no coverage percentage for it is
   published anywhere in this repository.
-- Nothing monitors the live mainnet app or the live Vercel service.
+- Nothing monitors the live mainnet app or the live Vercel service. **Closed
+  post-release, 2026-08-11 — see `[Unreleased]` above for the workflow and
+  its evidence.**
 - A real, non-reproducing N6-shaped live race surfaced once in
   `tests/state_anchor/test_live_e2e.py::TestG1M8RealDirectAnchor` during
   this pass's own `ci-live` dispatch (run 31228946039; did not reproduce on
@@ -260,16 +375,6 @@ runs 3.12 and 3.13; `ci-live` runs 3.13 only.
   (that file itself unmodified, per this repo's own frozen-fixture policy).
   Not a release blocker — nothing this repository ships depends on
   AlgoPlonk.
-- **T1-against-anchor still compiles `AnchorReceiptProbe` fresh per call**
-  (`relayer/client.py::_deploy_anchor_receipt_probe`) rather than moving to
-  `Mpt7AnchoredReceiptApp`, the permanent contract 014 built for T2. Its
-  live hijack exposure is already closed by the `on_completion` guard
-  independent of deploy mechanism; this is a cost/latency question (~1.74
-  ALGO abandoned per T1 call, and a checkout-with-`puyapy` requirement the
-  packaged Vercel deployment cannot satisfy — confirmed live, this pass:
-  `/verify-receipt-trustless` on a T1 leaf returns a real, honest 500
-  citing `MissingContractsSource`), not a soundness one. Deferred, per 014
-  §4.1's own scope note.
 - The original mainnet `Mpt7ReceiptApp` (`3665914633`) is abandoned, not
   deleted — still live and squattable in principle, no longer referenced by
   any manifest, service config, or this project's own tooling. `deploy

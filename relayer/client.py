@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import base64
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Literal
 
 from algosdk import logic, mnemonic, transaction
@@ -27,15 +26,13 @@ from relayer.drivers import m7_receipt as m7
 from relayer.drivers import m8_anchor as m8
 from relayer.errors import RetryReplanned, TierUnsupported
 from relayer.group.boxes import key_box_name, m4_retire_box_sizes, plan_box_refs, session_box_name, total_box_name
-from relayer.group.donors import donor_transaction_with_signer, puya_compile_contracts
+from relayer.group.donors import donor_transaction_with_signer
 from relayer.group.submit import run as submit_run
 from relayer.proofs import account as account_proof
 from relayer.proofs import classify
 from relayer.proofs.receipts_trie import build_receipts_trie_and_path
 from relayer.sources import beacon
 from relayer.sources.eth_rpc import get_block_header, get_block_receipts, get_proof
-
-REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
 @dataclass
@@ -346,14 +343,20 @@ class EthAvmClient:
     # prove_receipt() -- M7 (+M8)
     # ------------------------------------------------------------------
     def prove_receipt(self, block: int, tx_index: int, log_index: int, *, against_anchor: bool = False) -> ReceiptResult:
-        # `against_anchor=True` drives `AnchorReceiptProbe` -- a fresh,
-        # purpose-compiled probe app (§9.2's own scope), never the
-        # configured `m7_app_id` -- so m7_app_id is only required on the
-        # T1/T2 (RPC-rooted) path below.
+        # `against_anchor=True` drives `Mpt7AnchoredReceiptApp` (permanent,
+        # manifest-pinned, both T1 and T2 since this pass -- 014 §4.1's
+        # deferred T1 migration, closed), never the configured `m7_app_id`
+        # -- so m7_app_id is only required on the RPC-rooted path below.
         if not against_anchor and self.config.m7_app_id is None:
             raise ValueError("prove_receipt() needs m7_app_id configured")
         if against_anchor and self.config.m8_app_id is None:
             raise ValueError("against_anchor=True needs m8_app_id configured")
+        if against_anchor and self.config.m7_anchored_app_id is None:
+            raise ValueError(
+                "against_anchor=True needs m7_anchored_app_id configured (the deployed "
+                "Mpt7AnchoredReceiptApp -- docs/design/014-t2-against-anchor.md §4.1/§9; "
+                "this pass migrated the T1 path onto it too)"
+            )
         # §11's last paragraph, §18 item 11 (normative, security-adjacent):
         # "never re-derive receipts_root from RPC and pass it to M7 when an
         # M8 anchor is available... if M9 is configured with an m8_app_id,
@@ -387,17 +390,6 @@ class EthAvmClient:
             self._require_signer_and_donors("prove_receipt(against_anchor=True)")
             el_block_number = int(header["number"], 16)
             if cls_result.tier == "T2":
-                # 014 §4/§9: closes the gap this raise used to guard --
-                # `Mpt7AnchoredReceiptApp` (contracts/receipt/anchored_app.py)
-                # is a permanent, manifest-pinned app combining M7's T2
-                # box-staged walk with M8's anchor check, unlike
-                # `AnchorReceiptProbe` (T1-only, compiled per call).
-                if self.config.m7_anchored_app_id is None:
-                    raise ValueError(
-                        "prove_receipt(against_anchor=True) on a T2 leaf needs m7_anchored_app_id "
-                        "configured (the deployed Mpt7AnchoredReceiptApp -- docs/design/"
-                        "014-t2-against-anchor.md §4.1/§9)"
-                    )
                 return self._submit_t2_receipt_against_anchor(root_hash, tx_index, log_index, nodes, el_block_number)
             return self._submit_receipt_against_anchor(root_hash, tx_index, log_index, nodes, el_block_number)
 
@@ -530,45 +522,22 @@ class EthAvmClient:
             confirmed_round=result.confirmed_round, tx_ids=result.tx_ids,
         )
 
-    def _deploy_anchor_receipt_probe(self) -> int:
-        """Compiles+deploys `AnchorReceiptProbe` (`contracts/state_anchor/
-        bench_app.py`, test-only, never-deploy-to-mainnet infrastructure)
-        with `handoff.ANCHOR_APP_ID` patched to the real, already-deployed
-        M8 app id -- the ONLY existing mechanism anywhere in this codebase
-        that combines M7's walk with M8's `mpt7_result_against_anchor`
-        (§9.2's own scope). Mirrors `tests/state_anchor/conftest.py`'s
-        `patched_repo_copy`/`puya_compile` exactly, reimplemented in
-        `relayer.drivers.m7_receipt`/`relayer.group.donors` so this client
-        need not import `tests.*` (§4.3 rule 1)."""
-        patched_root = m7.patched_probe_source(REPO_ROOT, self.config.m8_app_id)
-        probe_src = patched_root / "contracts" / "state_anchor" / "bench_app.py"
-        contracts = puya_compile_contracts(probe_src, extra_pythonpath=patched_root)
-        from relayer.group.donors import compile_teal
-
-        approval = compile_teal(self.algod, contracts["AnchorReceiptProbe"]["approval"])
-        clear = compile_teal(self.algod, contracts["AnchorReceiptProbe"]["clear"])
-        sp = self.algod.suggested_params()
-        txn = transaction.ApplicationCreateTxn(
-            sender=self._sender, sp=sp, on_complete=transaction.OnComplete.NoOpOC,
-            approval_program=approval, clear_program=clear,
-            global_schema=transaction.StateSchema(0, 0), local_schema=transaction.StateSchema(0, 0),
-            extra_pages=1,
-        )
-        stxn = txn.sign(self._sk)
-        txid = self.algod.send_transaction(stxn)
-        confirmed = transaction.wait_for_confirmation(self.algod, txid, 4)
-        return confirmed["application-index"]
-
     def _submit_receipt_against_anchor(self, receipts_root: bytes, tx_index: int, log_index: int,
                                         nodes: list[bytes], el_block_number: int) -> ReceiptResult:
-        """The combined M7+M8 chain (G6-M9): `[DonorIssuer, attest,
-        MODE_INIT(+MODE_NEXT), MODE_AGAINST_ANCHOR]`, driven generically
-        through `relayer.drivers.m7_receipt`/`m8_anchor` instead of the
-        copy-pasted test code in `TestG3CombinedM7M8ReceiptProof` -- same
-        group shape, same compile-with-patched-`ANCHOR_APP_ID` step."""
-        probe_id = self._deploy_anchor_receipt_probe()
+        """T1-against-anchor, migrated onto the same permanent
+        `Mpt7AnchoredReceiptApp` §4.4 uses for T2 (this pass closes the gap
+        014 §4.1 deliberately deferred). Group: `[DonorIssuer, attest,
+        MODE_INIT(+MODE_NEXT), MODE_AGAINST_ANCHOR]` -- no payment, no
+        staging calls, since T1's raw-arg walk needs neither; only the
+        target app id changed from a freshly compiled+deployed
+        `AnchorReceiptProbe` (§4.1's own table: ~0.1-1.74 ALGO abandoned
+        MBR plus a ~3.4s `puyapy` compile, PER CALL, and unreachable from
+        the packaged Vercel deployment entirely -- `MissingContractsSource`)
+        to `self.config.m7_anchored_app_id`, the same already-deployed,
+        already-proven app `_submit_t2_receipt_against_anchor` drives."""
         signer = self._signer()
         ring_n = self._m8_ring_n()
+        anchored_app_id = self.config.m7_anchored_app_id
         _tier, walk_calls = m7.plan_receipt_calls(receipts_root, tx_index, log_index, nodes, group_offset=2)
 
         def build_group(n_donors: int):
@@ -589,7 +558,7 @@ class EthAvmClient:
                 sp.flat_fee = True
                 sp.fee = 1000
                 txn = transaction.ApplicationCallTxn(
-                    sender=self._sender, sp=sp, index=probe_id,
+                    sender=self._sender, sp=sp, index=anchored_app_id,
                     on_complete=transaction.OnComplete.NoOpOC, app_args=call.args,
                 )
                 atc.add_transaction(TransactionWithSigner(txn, signer))
@@ -601,7 +570,7 @@ class EthAvmClient:
             sp2.flat_fee = True
             sp2.fee = 1000
             check_txn = transaction.ApplicationCallTxn(
-                sender=self._sender, sp=sp2, index=probe_id,
+                sender=self._sender, sp=sp2, index=anchored_app_id,
                 on_complete=transaction.OnComplete.NoOpOC, app_args=check_args,
             )
             atc.add_transaction(TransactionWithSigner(check_txn, signer))
@@ -613,7 +582,7 @@ class EthAvmClient:
             raise m7.M7Error("no log produced by the against-anchor check")
         decoded = m7.decode_against_anchor(result.logs[-1])
         decoded["confirmed_round"] = result.confirmed_round
-        decoded["probe_app_id"] = probe_id
+        decoded["anchored_app_id"] = anchored_app_id
         decoded["measured_consumed"] = result.measured_consumed
         return ReceiptResult(
             rstatus_name=decoded["rstatus_name"], fields=decoded,

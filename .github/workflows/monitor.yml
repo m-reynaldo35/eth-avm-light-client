@@ -1,0 +1,89 @@
+name: Monitor (live service + mainnet apps)
+
+# docs/security.md's "Nothing is monitored" section (closed by this
+# workflow -- see CHANGELOG.md [Unreleased]): the two things this project
+# has that can go dark with nobody noticing are the live Vercel service
+# (`https://x402endpoint-nu.vercel.app`) and the real mainnet apps. This
+# runs the check logic in `scripts/monitor_check.py` (kept out of this YAML
+# so its failure branch can be unit-tested offline, see
+# tests/harness/test_monitor_check.py) on a schedule and files/updates a
+# real GitHub issue on failure -- no new secret, no third-party service:
+# `relayer/`'s own G8-M9 import-purity test forbids exactly the
+# sentry-sdk/Datadog class of dependency this would otherwise reach for.
+#
+# 30 minutes (48 runs/day): the same order of magnitude as how fast a real
+# outage would surface anyway (an x402 client's own retries, a human
+# running `deploy verify` by hand) -- see docs/release.md's own honest
+# "measured, not projected" standard -- while staying nowhere near GitHub
+# Actions' free-tier minutes for a job this short (~1-2 min measured, see
+# CHANGELOG.md's [Unreleased] entry for this workflow's own first run) and
+# nowhere near Vercel's or algonode's public-endpoint rate limits.
+
+on:
+  workflow_dispatch: {}
+  schedule:
+    - cron: "*/30 * * * *"
+
+permissions:
+  contents: read
+  issues: write
+
+env:
+  HEALTH_URL: https://x402endpoint-nu.vercel.app/health
+  MAINNET_TARGET: deploy/targets/mainnet.json
+  # Fixed, searched-on title -- the dedup key for "one open alert issue at a
+  # time," not a new one per failed run (spam is its own kind of nobody-
+  # watches-it-anymore failure).
+  ALERT_TITLE: "monitor: production check is failing"
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.13", cache: pip}
+      - name: Install (core deps only)
+        # `deploy verify` needs exactly pyproject.toml's four core deps
+        # (py-algorand-sdk/rlp/pycryptodome/py_ecc) -- no `[test]`/
+        # `[contracts]`/`[service]` extra, and `scripts/monitor_check.py`'s
+        # HTTP check is stdlib `urllib` on purpose (see that file's own
+        # docstring).
+        run: python -m pip install --upgrade pip && pip install -e .
+      - name: Check the live service and the real mainnet apps
+        run: |
+          python scripts/monitor_check.py \
+            --health-url "$HEALTH_URL" --target "$MAINNET_TARGET" \
+            | tee -a "$GITHUB_STEP_SUMMARY"
+      - name: File or update the alert issue on failure
+        if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          run_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+          body="Automated monitor check failed at $(date -u +%FT%TZ). Run: $run_url"
+          existing="$(gh issue list --repo "$GITHUB_REPOSITORY" --state open \
+            --search "$ALERT_TITLE in:title" --json number --jq '.[0].number // empty')"
+          if [ -n "$existing" ]; then
+            gh issue comment "$existing" --repo "$GITHUB_REPOSITORY" --body "$body"
+          else
+            gh issue create --repo "$GITHUB_REPOSITORY" --title "$ALERT_TITLE" \
+              --label bug --body "$body"
+          fi
+      - name: Close the alert issue once healthy again
+        # A red run files/comments on the issue; the next GREEN run after
+        # that is the "all clear" -- closing it here means a human never
+        # has to remember to close it by hand once the underlying problem
+        # is actually fixed.
+        if: success()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          existing="$(gh issue list --repo "$GITHUB_REPOSITORY" --state open \
+            --search "$ALERT_TITLE in:title" --json number --jq '.[0].number // empty')"
+          if [ -n "$existing" ]; then
+            gh issue comment "$existing" --repo "$GITHUB_REPOSITORY" \
+              --body "Healthy again as of $(date -u +%FT%TZ) -- closing."
+            gh issue close "$existing" --repo "$GITHUB_REPOSITORY"
+          fi

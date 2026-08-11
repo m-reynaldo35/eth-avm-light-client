@@ -285,6 +285,8 @@ def test_l2_submit_update_all_8_key_boxes_g1_m9(env_b):
 # ---------------------------------------------------------------------------
 @pytest.fixture(scope="module")
 def env_a_anchor(env_a, donor_pair):
+    import base64
+
     from tests.harness.deployment import puya_compile
     from tests.state_anchor.harness import Arc4Harness
 
@@ -305,6 +307,30 @@ def env_a_anchor(env_a, donor_pair):
 
     client = env_a["client"]
     client.config.m8_app_id = anchor.app_id
+
+    # Migration this pass (docs/design/014-t2-against-anchor.md §4.1's
+    # deferred T1 case, closed): L-4 below now drives the SAME permanent
+    # `Mpt7AnchoredReceiptApp` the T2 live tests use
+    # (tests/receipt/test_anchored_app_live.py's `probe_env`), not a fresh
+    # `AnchorReceiptProbe` compiled per call -- deployed here, once, via the
+    # real `deploy.plans.m7_anchored` tooling (never hand-written), bound
+    # to THIS module's own just-created `anchor.app_id`.
+    from deploy.config import ContractTarget, DeployTarget, NetworkConfig
+    from deploy.manifest import Manifest
+    from deploy.plans import m7_anchored
+
+    algod_c = client.algod
+    sp = algod_c.suggested_params()
+    gh = sp.gh if isinstance(sp.gh, str) else base64.b64encode(sp.gh).decode()
+    manifest = Manifest(genesis_id="test-live-relayer-014", genesis_hash=gh)
+    manifest.set_app("m8", app_id=anchor.app_id, approval_sha256="unused-by-this-plan")
+    target = DeployTarget(
+        network=NetworkConfig("http://localhost:4051", "a" * 64, "test-live-relayer-014", gh),
+        governance=donor_pair["sender"],
+        contracts={"m7_anchored": ContractTarget(deploy=True, t2_float=True)},
+    )
+    anchored_app_id = m7_anchored.apply(algod_c, donor_pair["sender"], donor_pair["sk"], target, manifest)
+    client.config.m7_anchored_app_id = anchored_app_id
     # Real timing risk this pass found: `anchor()` fetches a FRESH
     # `finality_update` internally (§6.5), which can drift ahead of
     # whatever M4's on-chain `fin_root` was last set to during `env_a`'s
@@ -383,10 +409,13 @@ def test_l4_receipt_against_anchor_g6_m9(env_a_anchored):
     receipts = get_block_receipts(el_block_number)
     assert header["receiptsRoot"] == "0x" + el_receipts_root.hex()
 
-    # Dynamic selection, same real constraint `TestG3CombinedM7M8ReceiptProof`
-    # documents: AnchorReceiptProbe only implements the T1 MODE_INIT/
-    # MODE_NEXT raw-arg walk (no box-staging), so pick a real tx whose trie
-    # proof fits that path and has 1-3 real logs.
+    # Dynamic selection: this test exercises `_submit_receipt_against_anchor`
+    # (T1's raw-arg MODE_INIT/MODE_NEXT walk, no box-staging), so pick a
+    # real tx whose trie proof fits T1's size bound and has 1-3 real logs.
+    # `Mpt7AnchoredReceiptApp` itself also implements T2's box-staged path
+    # (exercised for real by tests/receipt/test_anchored_app_live.py); this
+    # selection is about which of prove_receipt's two against-anchor
+    # dispatch branches this test wants, not a limitation of the app.
     LOG_INDEX = 0
     tx_index = None
     nodes = None
@@ -433,8 +462,10 @@ def test_l4_receipt_against_anchor_g6_m9(env_a_anchored):
     print(
         f"\nG6-M9 REAL LIVE PROOF: EL block {el_block_number} tx_index {tx_index} log_index "
         f"{LOG_INDEX} verified against the SAME on-chain M8 anchor from L-3's HISTORICAL "
-        f"submission (probe app {result.fields['probe_app_id']}), address=0x{result.fields['address']}, "
-        f"status={result.fields['status']}, tx_type={result.fields['tx_type']}, tx_ids={result.tx_ids}"
+        f"submission (permanent Mpt7AnchoredReceiptApp {result.fields['anchored_app_id']}, "
+        f"not a per-call probe -- 014 §4.1's deferred T1 migration, closed this pass), "
+        f"address=0x{result.fields['address']}, status={result.fields['status']}, "
+        f"tx_type={result.fields['tx_type']}, tx_ids={result.tx_ids}"
     )
 
 

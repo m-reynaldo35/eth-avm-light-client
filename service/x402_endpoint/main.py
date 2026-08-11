@@ -29,12 +29,17 @@ fight that rule):
     `receipts_client` (no m8_app_id configured). Trusts the RPC's own
     receiptsRoot. 97.5% real receipt coverage (007's own measured figure).
   * `/verify-receipt-trustless/...` -- the M7+M8 combined path
-    (against_anchor=True), `trustless_client` (m8_app_id configured).
-    Verifies the receiptsRoot itself against a real, sync-committee-signed
-    Algorand anchor -- zero RPC trust. T1-only (AnchorReceiptProbe's own
-    scope, docs/design/009 §9.2): 93.7% coverage, and only for a block
-    ALREADY anchored in M8's ring (this route does not anchor on demand --
-    `/keeper/run` below is what keeps the ring fresh).
+    (against_anchor=True), `trustless_client` (m8_app_id AND
+    m7_anchored_app_id configured). Verifies the receiptsRoot itself
+    against a real, sync-committee-signed Algorand anchor -- zero RPC
+    trust. Both T1 and T2 leaves (97.5% real receipt coverage, same as the
+    RPC-trusted route -- 93.7% was T1-only, before this migration folded T2
+    in), driven against the permanent, deployed `Mpt7AnchoredReceiptApp`
+    (docs/design/014-t2-against-anchor.md, this migration closing §4.1's
+    deferred T1 case) rather than a per-call compiled probe -- and only
+    for a block ALREADY anchored in M8's ring
+    (this route does not anchor on demand -- `/keeper/run` below is what
+    keeps the ring fresh).
 
 `/keeper/run` -- a Vercel Cron-triggered route (see vercel.json's `crons`)
 that periodically calls `sync(update=True)` then `anchor("latest")` with a
@@ -86,9 +91,12 @@ _base_config.m7_app_id = M7_APP_ID
 _base_config.m8_app_id = None
 receipts_client = EthAvmClient(_base_config)
 
-# `trustless_client`: same signer and donor pair, m8_app_id (and m4_app_id,
-# needed by AnchorReceiptProbe's own compile step) configured -- every call
-# through this client MUST pass against_anchor=True (S-1 enforces this).
+# `trustless_client`: same signer and donor pair, m8_app_id configured --
+# every call through this client MUST pass against_anchor=True (S-1
+# enforces this). m7_anchored_app_id comes from `RelayerConfig.from_env()`
+# above (M7_ANCHORED_APP_ID env var) and is never cleared here, unlike
+# m8_app_id on `receipts_client` -- both T1 and T2 against_anchor calls
+# need it (prove_receipt's own m7_anchored_app_id-required check).
 trustless_client = None
 if M8_APP_ID is not None:
     _trustless_config = RelayerConfig.from_env()

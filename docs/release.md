@@ -26,10 +26,10 @@ full citation trail).
 | 10 | `G1-M9` quarantined | Real, measured, structural: at real live participation the only mode touching all 8 key boxes costs 210,381–211,502 opcodes, over the ~177,392 shared donor ceiling. Opened 2026-08-06, **expires 2026-11-04**. | no — release-note item |
 | 11 | M5's budget gates open | Real measured numbers, not design targets: 5,116 opcode 8-node account walk (target < 3,276); 1,813 opcode 3-node receipt walk (target < 1,121); 1,969 B (target ≤ 1,400 B) | no — performance, not correctness |
 | 12 | M2's G1/G3 open | G3: 192 vs a ≤90 target; G1 is now index-dependent by design | no — same reasoning |
-| 13 | M6 has no submitting client (G4-M9) | `prove_account` never sends a transaction; no `test_l5` exists | no — README qualifies it |
-| 14 | 13 of M8's 22 error codes untested | Committed baseline (`tests/harness/error_codes_uncovered.txt`); growth is a red build | no — tracked, not blocking |
+| 13 | M6 has no submitting client (G4-M9) | **CLOSED, post-release, 2026-08-11.** `relayer/client.py::prove_account` now builds and submits a real `Mpt6ComposerApp` group, `tests/relayer/test_m6_live.py` proves it live (`C_INCLUDED` and `C_ABSENT_ACCOUNT`). See `CHANGELOG.md`'s `[Unreleased]` section. | no longer |
+| 14 | 13 of M8's 22 error codes untested | **11 of 13 CLOSED, post-release, 2026-08-11** (real, live tests, `tests/state_anchor/test_core.py`). The remaining 2 (N14, N21) are proven genuinely unreachable, not merely deferred — see `tests/harness/error_codes_uncovered.txt`'s own inline reasoning and `CHANGELOG.md`'s `[Unreleased]` section. | no — the 2 remaining are structural, not a gap |
 | 15 | T3 unimplemented | ~2.2% of a real 94,667-receipt sample needs it | no — no T3 coverage number is published anywhere |
-| 16 | Nothing monitors the live service/app | Measured up at release time; no alerting of any kind | no — docs must not say "monitored," and don't |
+| 16 | Nothing monitors the live service/app | **CLOSED, post-release, 2026-08-11.** `.github/workflows/monitor.yml` checks `/health` and `deploy verify` every 30 minutes, alerts via a real GitHub issue (`scripts/monitor_check.py`, offline-tested in `tests/harness/test_monitor_check.py`). `TrustedRootAnchor`'s equivocation latch remains uncovered — see `docs/security.md`. | no longer |
 | 17 | AlgoPlonk's swallowed-error bug reported upstream | **CLOSED.** Filed as [giuliop/AlgoPlonk#8](https://github.com/giuliop/AlgoPlonk/issues/8), from the draft at `tests/fixtures/spike-reference/zk-m7/UPSTREAM_ISSUE_ALGOPLONK.md` (that file itself left unmodified, per this repo's frozen-fixture policy). | no longer |
 | 18 | Bazaar registration / challenge submission tag | Undone | no — §8 declines Bazaar, sequences the tag; all five of the tag's preconditions are met as of this release |
 | 19 | Bare-contract `code_id`s unfillable offline | **CLOSED.** All seven contracts (including `MptSegmentApp`, `DonorIssuer`, `DonorCallee`) now have a `code_id` in `deploy/versions.json`, filled by running `deploy.compile.refresh_bare_contract_cache` against a real, reachable algod. | no longer |
@@ -49,7 +49,10 @@ citation trail.
    `algod-versions.json` artifact.
 3. The testnet app ids, rounds, and manifest path (G2-M12, once run).
 4. The mainnet app ids and `code_id`s, with the `deploy verify` command a
-   reader can run themselves, and the sentence that nothing monitors them.
+   reader can run themselves, and what actually monitors them now
+   (`.github/workflows/monitor.yml`, every 30 minutes) versus what still
+   does not (`TrustedRootAnchor`'s equivocation latch — see
+   `docs/security.md`).
 5. **The quarantine list, in full**, with its real numbers and expiry date.
 6. **The open-gate list** — the table above, verbatim.
 7. `requires-python` and the Python versions CI actually ran.
