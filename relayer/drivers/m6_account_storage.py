@@ -26,6 +26,23 @@ from relayer.proofs.account import AccountSegments, Segment
 SEGMENT_SELECTOR = b"ACS1"
 _MODE_NUM = {"A_INIT": 0, "A_NEXT": 1, "B_INIT": 2, "B_NEXT": 3}
 
+# 006 §3.1/§3.2 -- the composite status/phase discriminators, decoded off
+# the real on-chain log by `decode_result_from_log` below.
+PHASE_DONE = 3
+CSTATUS_NAMES = {
+    0: "C_PENDING_ACCOUNT",
+    1: "C_PENDING_STORAGE",
+    2: "C_INCLUDED",
+    3: "C_ABSENT_ACCOUNT",
+    4: "C_ABSENT_SLOT",
+    5: "C_ABSENT_SLOT_EMPTY_TRIE",
+    6: "C_ZERO_ENTRY",
+}
+
+
+class M6Error(Exception):
+    pass
+
 
 @dataclass(frozen=True)
 class RawCall:
@@ -76,16 +93,28 @@ def resolve_prev_gi(calls: list[RawCall], group_offset: int) -> list[RawCall]:
     index of the immediately-preceding segment call, once `group_offset`
     (how many transactions -- donors, funding, etc. -- precede the first
     segment call in the final group) is known. Mirrors §6.2 point 3
-    exactly: chains to the ACTUAL producing index, not a fixed offset."""
+    exactly: chains to the ACTUAL producing index, not a fixed offset.
+
+    Locates the placeholder STRUCTURALLY (arg index 4, iff mode != A_INIT --
+    §6.3's own wire layout: A_INIT's arg 4 is `state_root`, every other
+    mode's arg 4 is `prev_gi`), never by scanning `args` for a byte-value
+    match. A real bug found and fixed this pass: `donor_count=0` (the
+    ordinary, expected value for every segment except wherever the caller
+    concentrates its donors, §6.5's "all donors in transaction 0") encodes
+    to the SAME 8 zero bytes as `_PENDING_PREV_GI` -- a value-equality scan
+    (`_PENDING_PREV_GI in args`) false-positives on `A_INIT`'s own
+    `donor_count` argument, which has no `prev_gi` slot at all, and trips
+    "no preceding segment call" on the very first segment."""
     out: list[RawCall] = []
     prev_real_index: int | None = None
     for i, call in enumerate(calls):
         real_index = group_offset + i
         args = list(call.args)
-        if _PENDING_PREV_GI in args:
+        mode = args[1][0]
+        if mode != _MODE_NUM["A_INIT"]:
             assert prev_real_index is not None, "A_NEXT/B_INIT/B_NEXT with no preceding segment call"
-            idx = args.index(_PENDING_PREV_GI)
-            args[idx] = prev_real_index.to_bytes(8, "big")
+            assert args[4] == _PENDING_PREV_GI, "arg 4 is not the expected _PENDING_PREV_GI placeholder"
+            args[4] = prev_real_index.to_bytes(8, "big")
         out.append(RawCall(args=args, produces_log=call.produces_log))
         prev_real_index = real_index
     return out
@@ -113,3 +142,30 @@ def decode_result_from_log(log_bytes: bytes) -> dict:
         "awalk": c[246],
         "swalk": c[247],
     }
+
+
+def verify_terminal_result(decoded: dict, want_state_root: bytes, want_address: bytes, want_slot: bytes) -> None:
+    """The off-chain equivalent of `contracts/composer/handoff.py`'s
+    `mpt6_result_from_group` (design doc §6.6) -- TP-M6-3, load-bearing:
+    "a consumer (M8 in-group, or M9 off-chain) MUST compare all three
+    against what it intended before believing `C.value`". §5.4 traces the
+    exact substitution attack this defeats: a relayer can point a real,
+    honestly-executed `MODE_B_INIT` at the WRONG phase-A segment in the
+    same group and produce a true-but-irrelevant composite (about a
+    different address/slot) that no on-chain check catches, because both
+    the honest and substituted groups are structurally identical to the
+    contract. Only this check -- the consumer comparing the terminal
+    result's own self-described header against what it actually asked --
+    closes it. Raises `M6Error` (never returns a "maybe"), mirroring A17/
+    A18's fail-closed on-chain shape."""
+    if decoded["phase"] != PHASE_DONE:
+        raise M6Error(
+            f"composite is not PHASE_DONE (phase={decoded['phase']}) -- an incomplete walk yields "
+            "no verdict (§8.3's X5 trap, A17's off-chain equivalent)"
+        )
+    if bytes.fromhex(decoded["state_root"]) != want_state_root:
+        raise M6Error("TP-M6-3: result's state_root does not match the root the caller asked about (A18)")
+    if bytes.fromhex(decoded["address"]) != want_address:
+        raise M6Error("TP-M6-3: result's address does not match the address the caller asked about (A18)")
+    if bytes.fromhex(decoded["slot"]) != want_slot:
+        raise M6Error("TP-M6-3: result's slot does not match the slot the caller asked about (A18)")

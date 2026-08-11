@@ -62,6 +62,9 @@ class AccountResult:
     status: str
     balance: int | None
     slot_value: bytes | None
+    fields: dict | None = None
+    confirmed_round: int | None = None
+    tx_ids: list | None = None
 
 
 @dataclass
@@ -235,16 +238,109 @@ class EthAvmClient:
     # prove_account() -- M6
     # ------------------------------------------------------------------
     def prove_account(self, address: str, slot_hex: str, block: int | Literal["latest"] = "latest") -> AccountResult:
+        """Real, non-simulated submission against `Mpt6ComposerApp`
+        (design doc §6/§7): fetches the block header (for `R_state`, TP-
+        M6-1 -- the caller must not blindly trust a root derived from the
+        proof's own first node, §1.3's own honest caveat about
+        `segment_account_proof`'s fallback) and the real `eth_getProof`
+        response, segments it into M6's raw wire calls
+        (`relayer.proofs.account.segment_account_proof` /
+        `relayer.drivers.m6_account_storage.plan_composer_calls`), submits
+        the ONE atomic group via the shared `relayer.group.submit.run`
+        loop, and validates the terminal result against TP-M6-3 before
+        returning it (`m6.verify_terminal_result`, the off-chain analogue
+        of `mpt6_result_from_group`'s A17/A18 asserts -- this client is
+        exactly the "M9 off-chain client" §6.6/§13.3 say must perform that
+        check, since nothing on-chain does it here in v1 without an M8
+        anchor)."""
         if self.config.m6_app_id is None:
             raise ValueError("prove_account() needs m6_app_id configured")
+        if not self.config.has_signer:
+            raise ValueError("prove_account() needs a signer configured to submit a real group")
+        # §7.1/§6.2: M6's contract is SELF_ISSUED (BudgetConvention.
+        # SELF_ISSUED, relayer/group/budget.py) -- every segment's OWN
+        # `_issue_donors` call raises the group's shared pool, so unlike
+        # M4/M7/M8's DONOR_SIBLING convention this needs only a bare
+        # callee app (`donor_callee_id`), never a `DonorIssuer` sibling
+        # transaction (`donor_issuer_id` is not read below).
+        if self.config.donor_callee_id is None:
+            raise ValueError(
+                "prove_account() needs donor_callee_id configured (M6's SELF_ISSUED donor "
+                "convention, design doc §7.1 -- no DonorIssuer sibling needed, unlike M4/M7/M8)"
+            )
+
+        header = get_block_header(block)
+        state_root = bytes.fromhex(header["stateRoot"][2:])
         resp = get_proof(address, [slot_hex], block)
-        segs = account_proof.segment_account_proof(resp)
-        if not segs.account_included:
-            return AccountResult(status="C_ABSENT_ACCOUNT", balance=None, slot_value=None)
-        if segs.storage_included is None:
-            return AccountResult(status="C_ABSENT_SLOT_EMPTY_TRIE", balance=segs.balance, slot_value=None)
-        status = "C_INCLUDED" if segs.storage_included else "C_ABSENT_SLOT"
-        return AccountResult(status=status, balance=segs.balance, slot_value=None)
+        return self._submit_account_proof(resp, state_root)
+
+    def _submit_account_proof(self, resp: dict, declared_state_root: bytes) -> AccountResult:
+        """Builds and submits the real, one-atomic-group `Mpt6ComposerApp`
+        call sequence for one `eth_getProof` response (§6.5's real
+        5-transaction USDT/Binance-8 shape when both phases run; fewer
+        segments -- and NO phase-B segments at all -- for the account-
+        absent/empty-storage-trie cases, §8.1/§9.1, exactly matching what
+        `segment_account_proof` already decided offline).
+
+        §6.5's own finding ("All donors are issued in transaction 0,
+        before any walk work") is followed literally: `plan_composer_calls`
+        bakes the SAME scalar `donor_count` into every segment's own args
+        (each mode's `_issue_donors` call would otherwise fire on every
+        segment independently), so this method plans with `donor_count=0`
+        and then patches ONLY segment 0's `donor_count` arg once sizing is
+        known -- concentrating every donor call in the one transaction
+        that runs before any node-walking work, rather than redundantly
+        re-donating on every later segment."""
+        signer = self._signer()
+        segs = account_proof.segment_account_proof(resp, declared_state_root=declared_state_root)
+        donor_app_id = self.config.donor_callee_id
+        calls = m6.resolve_prev_gi(
+            m6.plan_composer_calls(segs, donor_app_id=donor_app_id, donor_count=0), group_offset=0
+        )
+
+        def build_group(n_donors: int):
+            atc = AtomicTransactionComposer()
+            for i, call in enumerate(calls):
+                sp = self.algod.suggested_params()
+                sp.flat_fee = True
+                args = list(call.args)
+                kwargs = {}
+                if i == 0:
+                    sp.fee = (n_donors + 1) * 1000
+                    if n_donors > 0:
+                        args[2] = n_donors.to_bytes(8, "big")
+                        kwargs["foreign_apps"] = [donor_app_id]
+                else:
+                    sp.fee = 1000
+                txn = transaction.ApplicationCallTxn(
+                    sender=self._sender, sp=sp, index=self.config.m6_app_id,
+                    on_complete=transaction.OnComplete.NoOpOC, app_args=args, **kwargs,
+                )
+                atc.add_transaction(TransactionWithSigner(txn, signer))
+            return atc
+
+        result = submit_run(self.algod, build_group, n_app_calls_in_group=len(calls), dry_run=False)
+        if not result.logs:
+            raise m6.M6Error("no log produced by the M6 composite result")
+        decoded = m6.decode_result_from_log(result.logs[-1])
+        # TP-M6-3, load-bearing (§5.4's substitution attack, §6.6): refuse
+        # to believe `decoded["value"]` until the terminal result's own
+        # self-described (state_root, address, slot) header is checked
+        # against what THIS call actually asked for.
+        m6.verify_terminal_result(decoded, declared_state_root, segs.address, segs.slot)
+        decoded["confirmed_round"] = result.confirmed_round
+        decoded["measured_consumed"] = result.measured_consumed
+        status = m6.CSTATUS_NAMES.get(decoded["cstatus"], f"unknown({decoded['cstatus']})")
+        # §8.1: C_ABSENT_ACCOUNT has no storage trie to speak of at all
+        # (§1.2's non-goal, no phase-B segment was ever issued) -- every
+        # OTHER terminal code (C_INCLUDED/C_ABSENT_SLOT/
+        # C_ABSENT_SLOT_EMPTY_TRIE/C_ZERO_ENTRY) carries a real, meaningful
+        # 32-byte value per §6.4's table, even when that value is zero.
+        slot_value = None if status == "C_ABSENT_ACCOUNT" else bytes.fromhex(decoded["value"])
+        return AccountResult(
+            status=status, balance=decoded["balance"], slot_value=slot_value, fields=decoded,
+            confirmed_round=result.confirmed_round, tx_ids=result.tx_ids,
+        )
 
     # ------------------------------------------------------------------
     # prove_receipt() -- M7 (+M8)
