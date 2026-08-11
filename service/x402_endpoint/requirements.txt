@@ -15,7 +15,7 @@
 -e ../..
 fastapi
 uvicorn[standard]
-x402-avm[fastapi,avm]
+x402-avm[fastapi,avm,extensions]
 py-algorand-sdk
 rlp
 pycryptodome
