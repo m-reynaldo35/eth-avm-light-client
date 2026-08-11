@@ -137,6 +137,25 @@ longer referenced by any manifest, service config, or this project's own
 tooling) rather than deleted, since a bare `Contract` has no delete-and-
 recover path for its retained MBR.
 
+## `deploy verify`'s M4 slack-balance finding (expected, not a bug)
+
+`deploy verify` reports mainnet M4 (`3670310452`) with 366,100 µALGO of
+"unexpected slack" above its own minimum balance (§10.4/G8-M10's stranded-
+funds check). Root cause, confirmed against real account state: M4 was
+funded to `20,227,000` µALGO — `deploy/plans/m4.py`'s `FUND_STAGE_MICROALGO
+["install"]`, the *install-time peak* MBR requirement (§4.1's MBR table),
+which must be met **before** a committee install can run at all, since
+Algorand requires the balance to already cover a transaction's requirements
+at submission time, not after. Once that real install completed and
+settled, the *steady-state* minimum dropped to `19,860,900` — the
+difference, `366,100`, is unavoidable slack, not a funding-calculation
+error: there is no way to fund exactly the steady-state amount and still
+have enough headroom for the transient peak the install itself requires.
+Per §10.4, a bare `Contract` app account has no withdrawal path, so this
+slack is permanent. `deploy verify`'s `FAIL` here is the tooling correctly
+reporting a known, structural cost of the install mechanism — not a
+regression to fix.
+
 ## Packaged wheel vs. checkout
 
 The published `eth-avm-relayer` wheel contains only `relayer/` — 35 `.py`
