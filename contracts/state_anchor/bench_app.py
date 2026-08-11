@@ -37,7 +37,7 @@ Three probes:
 
 import typing
 
-from algopy import ARC4Contract, Bytes, Contract, Txn, UInt64, arc4, log, op, subroutine
+from algopy import ARC4Contract, Bytes, Contract, OnCompleteAction, Txn, UInt64, arc4, log, op, subroutine
 
 from contracts.mpt.state import (
     WALK_ABSENT_BRANCH_TERM,
@@ -176,6 +176,7 @@ class AnchorReceiptProbe(Contract):
     """
 
     def approval_program(self) -> bool:
+        assert Txn.on_completion == OnCompleteAction.NoOp, "L1"
         if Txn.application_id.id == UInt64(0):
             return True
         if Txn.num_app_args == UInt64(0):
