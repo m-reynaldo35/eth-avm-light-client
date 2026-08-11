@@ -23,7 +23,7 @@ import sys
 import urllib.error
 import urllib.request
 
-DEFAULT_HEALTH_URL = "https://x402endpoint-nu.vercel.app/health"
+DEFAULT_HEALTH_URL = "https://eth-avm-light-client.vercel.app/health"
 DEFAULT_TARGET = "deploy/targets/mainnet.json"
 
 # service/x402_endpoint/main.py's real `/health` handler, read directly

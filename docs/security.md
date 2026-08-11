@@ -87,7 +87,7 @@ and is out of scope for this release (`O-M12-1`).
 ## What is, and is not, monitored
 
 **Closed, 2026-08-11**: `.github/workflows/monitor.yml` polls, every 30
-minutes, `GET https://x402endpoint-nu.vercel.app/health` (checked for a
+minutes, `GET https://eth-avm-light-client.vercel.app/health` (checked for a
 200 and the six real keys `service/x402_endpoint/main.py`'s handler
 returns) and `deploy verify --target deploy/targets/mainnet.json` (checked
 for every app reporting usable). The check logic lives in

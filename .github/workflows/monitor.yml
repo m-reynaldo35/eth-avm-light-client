@@ -3,7 +3,7 @@ name: Monitor (live service + mainnet apps)
 # docs/security.md's "Nothing is monitored" section (closed by this
 # workflow -- see CHANGELOG.md [Unreleased]): the two things this project
 # has that can go dark with nobody noticing are the live Vercel service
-# (`https://x402endpoint-nu.vercel.app`) and the real mainnet apps. This
+# (`https://eth-avm-light-client.vercel.app`) and the real mainnet apps. This
 # runs the check logic in `scripts/monitor_check.py` (kept out of this YAML
 # so its failure branch can be unit-tested offline, see
 # tests/harness/test_monitor_check.py) on a schedule and files/updates a
@@ -29,7 +29,7 @@ permissions:
   issues: write
 
 env:
-  HEALTH_URL: https://x402endpoint-nu.vercel.app/health
+  HEALTH_URL: https://eth-avm-light-client.vercel.app/health
   MAINNET_TARGET: deploy/targets/mainnet.json
   # Fixed, searched-on title -- the dedup key for "one open alert issue at a
   # time," not a new one per failed run (spam is its own kind of nobody-

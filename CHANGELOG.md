@@ -127,6 +127,36 @@ of the YAML specifically so its failure branch is unit-testable offline.
 - `TrustedRootAnchor`'s equivocation latch (`conflict != 0`, 009 §8.5) is
   explicitly NOT covered by this workflow — `deploy verify` does not read
   that piece of on-chain state — see `docs/security.md`.
+- **x402 Bazaar discovery wired up** (`server.register_extension(bazaar_resource_server_extension)`
+  plus `declare_discovery_extension()` on both routes, using real output
+  examples/schemas captured from live production calls). Verified locally:
+  a real 402 response's `payment-required` header decodes to a complete,
+  correctly-shaped `extensions.bazaar` payload. **Real production outage
+  caused deploying this**: `jsonschema` (required by
+  `x402.extensions.bazaar`) was present locally only as an incidental
+  transitive dependency, never declared — the first deploy took the entire
+  live service down (`ModuleNotFoundError`, every route, not just the new
+  ones), caught immediately by this session's own health check and fixed
+  by adding the `extensions` extra to `x402-avm`'s declared dependency.
+  **Honest, still-open result**: paginating GoPlausible's real
+  `discovery/resources` catalog (1,152 listings) after a real settled
+  payment does not yet show this service listed, despite their own docs
+  claiming automatic cataloging on first settlement — not yet diagnosed
+  whether this is indexing lag or a facilitator-side gap.
+- **Live service domain renamed**: the Vercel project (and its production
+  domain) was `x402_endpoint`/`x402endpoint-nu.vercel.app` since the
+  service's first deployment (2026-08-07) — an artifact of that first
+  deploy running from `service/x402_endpoint/` rather than the repo root.
+  Renamed to match the actual GitHub repo slug:
+  **`eth-avm-light-client.vercel.app`**. Real gotcha found doing this:
+  Vercel's project-level `ssoProtection` (`all_except_custom_domains`)
+  gates any domain added via `vercel alias set` behind a Vercel SSO
+  login page — a plain deployment alias isn't a registered project
+  domain. Fixed by registering it properly via the `POST /v10/projects/
+  {id}/domains` API instead, confirmed publicly reachable (`GET
+  /health` returns real data, no redirect) immediately after. The old
+  domain is left in place, unremoved, and still serves the same live
+  deployment.
 
 ## [1.0.0] - 2026-08-11
 
