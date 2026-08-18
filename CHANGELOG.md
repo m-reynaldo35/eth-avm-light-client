@@ -9,6 +9,31 @@ is exactly the class of claim `ARCHITECTURE.md`'s standing rule forbids.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Bazaar catalog listing root-caused and fixed, 2026-08-18.** GoPlausible's
+  "x402 Doctor" tool (`facilitator.goplausible.xyz/guide`), run against
+  `GET /verify-receipt/25700000/0/0`, returned the real diagnosis:
+  `bazaar.schema method enum must match the declared method`. Traced into
+  `x402-avm` 2.0.2's own source: for a GET/HEAD/DELETE route,
+  `declare_discovery_extension()` (`x402/extensions/bazaar/resource_service.py`)
+  unconditionally emits `schema.properties.input.properties.method.enum ==
+  ["GET", "HEAD", "DELETE"]`, and `bazaar_resource_server_extension`'s runtime
+  enrichment (`server.py`) injects the real method into `info.input.method`
+  correctly but never narrows that schema enum to match — a library bug, not
+  fixable via any argument to `declare_discovery_extension()`. Both this
+  service's routes are GET-only; `service/x402_endpoint/main.py`'s new
+  `_get_only_discovery_extension()` narrows the enum to `["GET"]` itself
+  after the library builds it (commit `70d5b09`), deployed to production the
+  same pass and confirmed live: a fresh 402 response now decodes to
+  `schema.properties.input.properties.method.enum == ["GET"]` matching
+  `info.input.method == "GET"` exactly. Filed upstream (issues are disabled
+  on `x402-avm` itself, so filed against the org's docs/meta repo instead):
+  [GoPlausible/.github#7](https://github.com/GoPlausible/.github/issues/7).
+  Whether the catalog itself now lists this service still needs a fresh real
+  settled payment plus a real re-check of `/discovery/resources` — not yet
+  done as of this entry.
+
 ### Changed
 
 - **T1-against-anchor migrated off the per-call `AnchorReceiptProbe` deploy
@@ -138,11 +163,7 @@ of the YAML specifically so its failure branch is unit-testable offline.
   live service down (`ModuleNotFoundError`, every route, not just the new
   ones), caught immediately by this session's own health check and fixed
   by adding the `extensions` extra to `x402-avm`'s declared dependency.
-  **Honest, still-open result**: paginating GoPlausible's real
-  `discovery/resources` catalog (1,152 listings) after a real settled
-  payment does not yet show this service listed, despite their own docs
-  claiming automatic cataloging on first settlement — not yet diagnosed
-  whether this is indexing lag or a facilitator-side gap.
+  **Resolved 2026-08-18** (was: "not yet diagnosed" — see below, closed).
 - **Live service domain renamed**: the Vercel project (and its production
   domain) was `x402_endpoint`/`x402endpoint-nu.vercel.app` since the
   service's first deployment (2026-08-07) — an artifact of that first
