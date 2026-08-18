@@ -67,7 +67,7 @@ import os
 
 from fastapi import FastAPI, Header, HTTPException, Request
 
-from x402.extensions.bazaar import OutputConfig, bazaar_resource_server_extension, declare_discovery_extension
+from x402.extensions.bazaar import BAZAAR, OutputConfig, bazaar_resource_server_extension, declare_discovery_extension
 from x402.http import FacilitatorConfig, HTTPFacilitatorClient, PaymentOption
 from x402.http.middleware.fastapi import PaymentMiddlewareASGI
 from x402.http.types import RouteConfig
@@ -194,6 +194,23 @@ _trustless_output = OutputConfig(
     schema=_receipt_output_schema,
 )
 
+def _get_only_discovery_extension(output: OutputConfig) -> dict:
+    """Work around a real bug in x402-avm 2.0.2's bazaar extension: for a query-method
+    (GET/HEAD/DELETE) route, `_create_query_discovery_extension`
+    (x402/extensions/bazaar/resource_service.py) unconditionally emits
+    `schema.properties.input.properties.method.enum == ["GET", "HEAD", "DELETE"]`,
+    regardless of the actual method -- and `bazaar_resource_server_extension`'s runtime
+    enrichment (server.py) only injects the real method into `info.input.method`, it never
+    narrows that schema enum to match. GoPlausible's catalog validator requires the two to
+    match exactly and silently drops the resource from `/discovery/resources` otherwise --
+    confirmed directly via the facilitator's own "x402 Doctor" tool, 2026-08-18
+    ("bazaar.schema method enum must match the declared method"). Both our routes are
+    GET-only, so narrow the enum ourselves after the library builds it."""
+    ext = declare_discovery_extension(output=output)
+    ext[BAZAAR]["schema"]["properties"]["input"]["properties"]["method"]["enum"] = ["GET"]
+    return ext
+
+
 routes = {
     "GET /verify-receipt/*": RouteConfig(
         accepts=_price,
@@ -202,7 +219,7 @@ routes = {
                      "against M7 (docs/design/007-receipt-log-proof.md), T1+T2, RPC-trusted receiptsRoot. "
                      "GET /verify-receipt/{block_number}/{tx_index}/{log_index} -- e.g. "
                      "/verify-receipt/25691209/0/0.",
-        extensions={**declare_discovery_extension(output=_rpc_trusted_output)},
+        extensions={**_get_only_discovery_extension(_rpc_trusted_output)},
     ),
     "GET /verify-receipt-trustless/*": RouteConfig(
         accepts=_price,
@@ -214,7 +231,7 @@ routes = {
                      "The block must already be anchored (see /keeper/run). GET "
                      "/verify-receipt-trustless/{block_number}/{tx_index}/{log_index} -- e.g. "
                      "/verify-receipt-trustless/25732381/1/0.",
-        extensions={**declare_discovery_extension(output=_trustless_output)},
+        extensions={**_get_only_discovery_extension(_trustless_output)},
     ),
 }
 
