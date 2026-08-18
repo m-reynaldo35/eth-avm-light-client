@@ -30,9 +30,14 @@ is exactly the class of claim `ARCHITECTURE.md`'s standing rule forbids.
   `info.input.method == "GET"` exactly. Filed upstream (issues are disabled
   on `x402-avm` itself, so filed against the org's docs/meta repo instead):
   [GoPlausible/.github#7](https://github.com/GoPlausible/.github/issues/7).
-  Whether the catalog itself now lists this service still needs a fresh real
-  settled payment plus a real re-check of `/discovery/resources` — not yet
-  done as of this entry.
+  **Confirmed listed, same day**: a fresh real settled payment (`GET
+  /verify-receipt/25691209/0/0`, round `64186277`) followed by a real
+  `/discovery/resources` re-check found this service cataloged on the very
+  first poll (well under the guide's own "within a minute" claim) —
+  `resourceUrl: https://eth-avm-light-client.vercel.app/verify-receipt/25691209/0/0`,
+  method `GET`, description matching this service's real route text exactly.
+  The full loop (Doctor diagnosis -> library-bug root cause -> local fix ->
+  deploy -> real payment -> real catalog listing) is closed.
 
 ### Changed
 
