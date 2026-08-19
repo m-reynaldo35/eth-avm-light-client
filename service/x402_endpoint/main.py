@@ -66,6 +66,7 @@ import hmac
 import os
 
 from fastapi import FastAPI, Header, HTTPException, Request
+from fastapi.responses import PlainTextResponse
 
 from x402.extensions.bazaar import BAZAAR, OutputConfig, bazaar_resource_server_extension, declare_discovery_extension
 from x402.http import FacilitatorConfig, HTTPFacilitatorClient, PaymentOption
@@ -136,9 +137,47 @@ server.register_extension(bazaar_resource_server_extension)
 _price = PaymentOption(
     scheme="exact",
     pay_to=PAY_TO_ADDRESS,
-    price=AssetAmount(amount=str(PRICE_MICRO_USDC), asset=str(usdc_asset), extra={"name": "USDC", "decimals": 6}),
+    # "tag" is the x402 Global Challenge's own attribution key (per GoPlausible's
+    # facilitator guide: without it, payments settle but aren't counted toward
+    # the challenge leaderboard). It rides in the same `extra` dict as
+    # name/decimals -- the AVM scheme merges its own fields (feePayer,
+    # genesisHash, genesisId) in alongside these at request time, confirmed by
+    # decoding a real live 402 response.
+    price=AssetAmount(
+        amount=str(PRICE_MICRO_USDC), asset=str(usdc_asset),
+        extra={"name": "USDC", "decimals": 6, "tag": "x402-global-challenge"},
+    ),
     network=NETWORK,
 )
+
+# x402-merchant extension (facilitator.goplausible.xyz/guide): no dedicated
+# Python helper exists in x402-avm 2.0.2 (only `bazaar` is shipped), but the
+# wire format is a plain dict, same shape as `declare_discovery_extension`'s
+# own output -- so it needs no library support, just this dict merged into
+# each route's `extensions=`. Without it, the facilitator falls back to
+# scraping domain metadata (OpenGraph tags / llms.txt / agent-card.json) for
+# a name -- confirmed via a real merchant-page screenshot that this fallback
+# was showing only the raw merchant_id hash, no name or description.
+_merchant_extension = {
+    "x402-merchant": {
+        "info": {
+            "name": "ETH-AVM Light Client",
+            "website": "https://github.com/m-reynaldo35/eth-avm-light-client",
+            "categories": ["api", "algorand", "ethereum", "verification", "x402"],
+        },
+        "schema": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "type": "object",
+            "required": ["name"],
+            "properties": {
+                "name": {"type": "string"},
+                "website": {"type": "string"},
+                "logo": {"type": "string"},
+                "categories": {"type": "array", "items": {"type": "string"}},
+            },
+        },
+    }
+}
 
 # Real response shapes, captured from this session's own live production
 # calls (not hand-guessed) -- an agent reading the Bazaar catalog gets an
@@ -219,7 +258,7 @@ routes = {
                      "against M7 (docs/design/007-receipt-log-proof.md), T1+T2, RPC-trusted receiptsRoot. "
                      "GET /verify-receipt/{block_number}/{tx_index}/{log_index} -- e.g. "
                      "/verify-receipt/25691209/0/0.",
-        extensions={**_get_only_discovery_extension(_rpc_trusted_output)},
+        extensions={**_get_only_discovery_extension(_rpc_trusted_output), **_merchant_extension},
     ),
     "GET /verify-receipt-trustless/*": RouteConfig(
         accepts=_price,
@@ -231,7 +270,7 @@ routes = {
                      "The block must already be anchored (see /keeper/run). GET "
                      "/verify-receipt-trustless/{block_number}/{tx_index}/{log_index} -- e.g. "
                      "/verify-receipt-trustless/25732381/1/0.",
-        extensions={**_get_only_discovery_extension(_trustless_output)},
+        extensions={**_get_only_discovery_extension(_trustless_output), **_merchant_extension},
     ),
 }
 
@@ -332,6 +371,75 @@ async def index():
             "GET /verify-receipt/{block_number}/{tx_index}/{log_index}": "RPC-trusted, 0.01 USDC",
             "GET /verify-receipt-trustless/{block_number}/{tx_index}/{log_index}": "zero RPC trust, 0.01 USDC",
         },
+    }
+
+
+@app.get("/llms.txt", response_class=PlainTextResponse)
+async def llms_txt():
+    """Domain-metadata fallback for facilitators/agents that don't read the
+    x402-merchant extension (facilitator.goplausible.xyz/guide names this,
+    OpenGraph tags, and agent-card.json as the three fallback sources). Plain
+    text by convention (the emerging llms.txt standard), not JSON."""
+    return (
+        "# ETH-AVM Light Client\n\n"
+        "> Verifies Ethereum receipt/log inclusion via real Algorand smart contracts, "
+        "paid per call via x402 (0.01 USDC).\n\n"
+        "Two trust models: RPC-trusted (fast, T1+T2) or fully trustless (the "
+        "receiptsRoot itself checked against a real sync-committee-signed Algorand "
+        "anchor -- zero RPC trust). Given a block number, transaction index, and "
+        "log index, returns a cryptographically verified answer to whether that "
+        "specific log is really included in Ethereum's receipts trie -- checked by "
+        "a real Algorand smart contract, not asserted by this server.\n\n"
+        "## Routes\n\n"
+        "- GET /verify-receipt/{block_number}/{tx_index}/{log_index} -- RPC-trusted, 0.01 USDC\n"
+        "- GET /verify-receipt-trustless/{block_number}/{tx_index}/{log_index} -- zero RPC trust, 0.01 USDC\n"
+        "- GET /health -- service status, free\n\n"
+        "## What this does not do\n\n"
+        "Proves one specific log is included -- it does not prove completeness "
+        "(that all matching events in a range occurred) and does not verify "
+        "receipts whose RLP-encoded leaf exceeds 4,096 bytes (returns a clean "
+        "501, T3_UNSUPPORTED, out of scope for this version).\n\n"
+        "## Docs\n\n"
+        "https://github.com/m-reynaldo35/eth-avm-light-client\n"
+    )
+
+
+@app.get("/agent-card.json")
+async def agent_card():
+    """Domain-metadata fallback, see /llms.txt's docstring. A common,
+    loosely-standardized agent-discovery shape (name/description/url/skills),
+    not a specific protocol's exact required schema -- GoPlausible's guide
+    names agent-card.json as a fallback source without pinning one."""
+    return {
+        "name": "ETH-AVM Light Client",
+        "description": "Verifies Ethereum receipt/log inclusion via real Algorand smart "
+                        "contracts. Two trust models: RPC-trusted (fast, T1+T2) or fully "
+                        "trustless (zero RPC trust, sync-committee-anchored). Paid per call "
+                        "via x402, 0.01 USDC.",
+        "url": "https://eth-avm-light-client.vercel.app",
+        "provider": {
+            "organization": "m-reynaldo35",
+            "url": "https://github.com/m-reynaldo35/eth-avm-light-client",
+        },
+        "skills": [
+            {
+                "id": "verify-receipt-rpc-trusted",
+                "name": "Verify Ethereum receipt/log (RPC-trusted)",
+                "description": "Prove a specific log is included in Ethereum's receipts trie "
+                                "via a real Algorand transaction, T1+T2, RPC-trusted receiptsRoot.",
+                "route": "GET /verify-receipt/{block_number}/{tx_index}/{log_index}",
+                "price_usdc": 0.01,
+            },
+            {
+                "id": "verify-receipt-trustless",
+                "name": "Verify Ethereum receipt/log (trustless)",
+                "description": "Prove a specific log's inclusion AND the receiptsRoot itself, "
+                                "against a real sync-committee-signed Algorand anchor -- zero "
+                                "RPC trust.",
+                "route": "GET /verify-receipt-trustless/{block_number}/{tx_index}/{log_index}",
+                "price_usdc": 0.01,
+            },
+        ],
     }
 
 
